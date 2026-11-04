@@ -149,6 +149,8 @@
 #define MISC2_PLLCMD1  0x40
 #define MISC2_PLLCMD2  0x80
 #define W_EXTINT 15
+#define EXTINT_WR7P    0x01
+#define WR7P_EXTENDED_READ 0x40
 #define EXTINT_DCD     0x08
 #define EXTINT_SYNCINT 0x10
 #define EXTINT_CTSINT  0x20
@@ -357,6 +359,8 @@ static void escc_soft_reset_chn(ESCCChannelState *s)
     s->rregs[R_STATUS] |= STATUS_TXEMPTY | STATUS_TXUNDRN;
     if (s->disabled) {
         s->rregs[R_STATUS] |= STATUS_DCD | STATUS_SYNC | STATUS_CTS;
+    } else if (s->terminal) {
+        s->rregs[R_STATUS] |= STATUS_DCD | STATUS_CTS;
     }
     /*
      * A real Z8530's RR1 "All Sent" bit reads 1 whenever the
@@ -393,6 +397,7 @@ static void escc_hard_reset_chn(ESCCChannelState *s)
     s->wregs[W_CLOCK] = CLOCK_TRXC;
     s->wregs[W_MISC2] &= MISC2_PLLCMD1 | MISC2_PLLCMD2;
     s->wregs[W_MISC2] |= MISC2_LCL_LOOP | MISC2_PLLCMD0;
+    s->wr7p = 0x20;
 }
 
 static void escc_reset(DeviceState *d)
@@ -642,8 +647,17 @@ static void escc_mem_write(void *opaque, hwaddr addr,
                 s->rregs[R_STATUS] |= STATUS_SYNC;
             }
             break;
+        case W_SYNC2:
+            /* WR15 D0 redirects WR7 to WR7' */
+            if (s->wregs[W_EXTINT] & EXTINT_WR7P) {
+                s->wr7p = val;
+            } else {
+                s->wregs[s->reg] = val;
+            }
+            break;
         case W_INTR ... W_IVEC:
-        case W_SYNC1 ... W_TXBUF:
+        case W_SYNC1:
+        case W_TXBUF:
         case W_MISC1 ... W_CLOCK:
         case W_MISC2 ... W_EXTINT:
             s->wregs[s->reg] = val;
@@ -748,8 +762,25 @@ static uint64_t escc_mem_read(void *opaque, hwaddr addr,
     s = &serial->chn[channel];
     switch (saddr) {
     case SERIAL_CTRL:
-        trace_escc_mem_readb_ctrl(CHN_C(s), s->reg, s->rregs[s->reg]);
         ret = s->rregs[s->reg];
+        if (s->wr7p & WR7P_EXTENDED_READ) {
+            /* extended read: write registers read back */
+            switch (s->reg) {
+            case 4: case 5: case 6:
+                ret = s->wregs[s->reg];
+                break;
+            case 7: case 14:
+                ret = s->wr7p;
+                break;
+            case 9:
+                ret = s->wregs[W_RXCTRL];
+                break;
+            case 11:
+                ret = s->wregs[W_MISC1];
+                break;
+            }
+        }
+        trace_escc_mem_readb_ctrl(CHN_C(s), s->reg, ret);
         s->reg = 0;
         return ret;
     case SERIAL_DATA:
@@ -1237,6 +1268,10 @@ static void escc_realize(DeviceState *dev, Error **errp)
 
     s->chn[0].disabled = s->disabled;
     s->chn[1].disabled = s->disabled;
+    for (i = 0; i < 2; i++) {
+        s->chn[i].terminal = s->terminal_lines &&
+                             qemu_chr_fe_backend_connected(&s->chn[i].chr);
+    }
 
     memory_region_init_io(&s->mmio, OBJECT(dev), &escc_mem_ops, s, "escc",
                           ESCC_SIZE << s->it_shift);
@@ -1265,6 +1300,7 @@ static const Property escc_properties[] = {
     DEFINE_PROP_UINT32("it_shift",  ESCCState, it_shift,    0),
     DEFINE_PROP_BOOL("bit_swap",    ESCCState, bit_swap,    false),
     DEFINE_PROP_UINT32("disabled",  ESCCState, disabled,    0),
+    DEFINE_PROP_BOOL("terminal-lines", ESCCState, terminal_lines, false),
     DEFINE_PROP_UINT32("chnBtype",  ESCCState, chn[0].type, 0),
     DEFINE_PROP_UINT32("chnAtype",  ESCCState, chn[1].type, 0),
     DEFINE_PROP_CHR("chrB", ESCCState, chn[0].chr),

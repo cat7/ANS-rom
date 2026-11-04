@@ -39,6 +39,8 @@ typedef struct ESCCChannelState {
     CharFrontend chr;
     int e0_mode, led_mode, caps_lock_mode, num_lock_mode;
     int disabled;
+    bool terminal;  /* a connected terminal holds CTS and DCD asserted */
+    uint8_t wr7p;   /* WR7' (ESCC) */
     int clock;
     uint32_t vmstate_dummy;
     ESCCChnID chn; /* this channel, A (base+4) or B (base+0) */
@@ -79,6 +81,7 @@ struct ESCCState {
     bool bit_swap;
     MemoryRegion mmio;
     uint32_t disabled;
+    bool terminal_lines;
     uint32_t frequency;
 };
 

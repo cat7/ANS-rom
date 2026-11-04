@@ -186,6 +186,7 @@ static void ans_init(MachineState *machine)
     dev = DEVICE(object_resolve_path_component(gc, "escc"));
     qdev_prop_set_chr(dev, "chrA", serial_hd(0));
     qdev_prop_set_chr(dev, "chrB", serial_hd(1));
+    qdev_prop_set_bit(dev, "terminal-lines", true);
     dev = DEVICE(object_resolve_path_component(gc, "cuda"));
     qdev_prop_set_bit(dev, "default-pram", false);
     dev = DEVICE(object_resolve_path_component(gc, "gbus"));
