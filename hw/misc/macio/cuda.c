@@ -271,6 +271,7 @@ static void cuda_update(CUDAState *s)
                  */
                 if (s->data_in_index > 0 && s->data_in_index < s->data_in_size) {
                     s->data_in_size = s->data_in_index;
+                    ms->b |= TREQ;
                     adb_autopoll_unblock(adb_bus);
                 }
 
@@ -778,23 +779,29 @@ static bool cuda_cmd_write_mcu_mem(CUDAState *s,
 /*
  * Extended Parameter RAM access. Real Old World ROMs read/write PRAM
  * through the Cuda chip rather than a memory-mapped register: the
- * request carries a 2-byte big-endian offset, and GET_PRAM replies with
- * the single byte at that offset while SET_PRAM takes a 3rd byte to
- * store there.
+ * request carries a 2-byte big-endian offset. GET_PRAM is an
+ * open-ended read: Cuda streams successive bytes of the 256-byte page
+ * until the host ends the transaction. SET_PRAM stores the bytes that
+ * follow the offset at successive addresses.
  */
+#define CUDA_PRAM_READ_MAX  (sizeof(((CUDAState *)0)->data_in) - 3)
+
 static bool cuda_cmd_get_pram(CUDAState *s,
                               const uint8_t *in_data, int in_len,
                               uint8_t *out_data, int *out_len)
 {
     uint16_t addr;
+    int i;
 
     if (in_len != 2) {
         return false;
     }
 
     addr = (((uint16_t)in_data[0]) << 8) | in_data[1];
-    out_data[0] = s->pram[addr % sizeof(s->pram)];
-    *out_len = 1;
+    for (i = 0; i < CUDA_PRAM_READ_MAX; i++) {
+        out_data[i] = s->pram[(addr + i) % sizeof(s->pram)];
+    }
+    *out_len = CUDA_PRAM_READ_MAX;
     return true;
 }
 
@@ -857,13 +864,16 @@ static bool cuda_cmd_set_pram(CUDAState *s,
                               uint8_t *out_data, int *out_len)
 {
     uint16_t addr;
+    int i;
 
-    if (in_len != 3) {
+    if (in_len < 3) {
         return false;
     }
 
     addr = (((uint16_t)in_data[0]) << 8) | in_data[1];
-    s->pram[addr % sizeof(s->pram)] = in_data[2];
+    for (i = 2; i < in_len; i++) {
+        s->pram[(addr + i - 2) % sizeof(s->pram)] = in_data[i];
+    }
     cuda_pram_update(s);
     *out_len = 0;
     return true;
@@ -897,7 +907,7 @@ static const CudaCommand handlers[] = {
 static void cuda_receive_packet(CUDAState *s,
                                 const uint8_t *data, int len)
 {
-    uint8_t obuf[32] = { CUDA_PACKET, 0, data[0] };
+    uint8_t obuf[sizeof(s->data_in)] = { CUDA_PACKET, 0, data[0] };
     int i, out_len = 0;
 
     for (i = 0; i < ARRAY_SIZE(handlers); i++) {
