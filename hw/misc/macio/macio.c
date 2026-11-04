@@ -603,6 +603,9 @@ static void macio_grandcentral_realize(PCIDevice *d, Error **errp)
     memory_region_add_subregion(&s->bar, 0x11000,
                                 sysbus_mmio_get_region(sbd, 0));
     sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(pic_dev, GC_MACE_IRQ));
+    sysbus_connect_irq(sbd, 1, qdev_get_gpio_in(pic_dev, GC_ENET_TX_DMA_IRQ));
+    sysbus_connect_irq(sbd, 2, qdev_get_gpio_in(pic_dev, GC_ENET_RX_DMA_IRQ));
+    mace_register_dma(&gs->mace, &s->dbdma, 2, 3);
 
     if (!qdev_realize(DEVICE(&gs->awacs), BUS(&s->macio_bus), errp)) {
         return;

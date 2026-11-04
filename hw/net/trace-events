@@ -548,3 +548,7 @@ bmac_dma_irq(int channel, bool level) "channel=%d level=%d"
 # mace.c
 mace_read(unsigned reg, uint8_t val) "reg %u -> 0x%02x"
 mace_write(unsigned reg, uint64_t val) "reg %u = 0x%02"PRIx64
+mace_tx(int len, int loop) "frame %d bytes loop %d"
+mace_rx(size_t size, int len) "frame %zu bytes, %d to the FIFO"
+mace_tx_dma(uint64_t addr, int len, int last) "addr 0x%"PRIx64" len %d last %d"
+mace_rx_dma(uint64_t addr, int len, int last, int n) "addr 0x%"PRIx64" len %d last %d moved %d"

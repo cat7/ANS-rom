@@ -41,6 +41,8 @@
 #include "hw/misc/macio/macio.h"
 #include "hw/misc/macio/cuda.h"
 #include "hw/char/escc.h"
+#include "hw/net/mace.h"
+#include "net/net.h"
 #include "chardev/char.h"
 #include "system/system.h"
 #include "system/reset.h"
@@ -133,6 +135,7 @@ static void ans_init(MachineState *machine)
     MacIOState *macio;
     Object *gc;
     BusState *adb_bus;
+    MACAddr mac;
     char *filename;
     int size, i;
 
@@ -190,7 +193,14 @@ static void ans_init(MachineState *machine)
     qdev_prop_set_bit(dev, "terminal-lines", true);
     dev = DEVICE(object_resolve_path_component(gc, "cuda"));
     qdev_prop_set_bit(dev, "default-pram", false);
+    /* AIX keeps the clock in seconds since 1970 */
+    qdev_prop_set_bit(dev, "rtc-unix-epoch", true);
+    dev = DEVICE(object_resolve_path_component(gc, "mace"));
+    qemu_configure_nic_device(dev, true, NULL);
+    qemu_macaddr_default_if_unset(&MACE(dev)->conf.macaddr);
+    mac = MACE(dev)->conf.macaddr;
     dev = DEVICE(object_resolve_path_component(gc, "gbus"));
+    qdev_prop_set_macaddr(dev, "mac", mac.a);
     ams->gbus = ANS_GBUS(dev);
     qdev_prop_set_string(dev, "keyswitch", ams->keyswitch);
     qdev_prop_set_bit(dev, "two-supplies", ams->power_supplies == 2);
