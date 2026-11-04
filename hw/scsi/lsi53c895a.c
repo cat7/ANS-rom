@@ -631,7 +631,7 @@ static void lsi_unstack_irq(LSIState *s)
     lsi_update_irq(s);
 }
 
-/* Selection time-out: STO, with the unexpected disconnect stacked after. */
+/* Selection time-out: STO and UDC in the same interrupt. */
 static void lsi_select_timeout(void *opaque)
 {
     LSIState *s = opaque;
@@ -645,8 +645,7 @@ static void lsi_select_timeout(void *opaque)
         s->waiting = LSI_NOWAIT;
     }
     s->sstat0 &= ~LSI_SSTAT0_WOA;
-    lsi_script_scsi_interrupt(s, 0, LSI_SIST1_STO);
-    lsi_script_scsi_interrupt(s, LSI_SIST0_UDC, 0);
+    lsi_script_scsi_interrupt(s, LSI_SIST0_UDC, LSI_SIST1_STO);
     lsi_stop_script(s);
 }
 
