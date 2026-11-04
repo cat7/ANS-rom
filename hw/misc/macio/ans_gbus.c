@@ -21,6 +21,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/host-utils.h"
 #include "qapi/error.h"
 #include "qemu/error-report.h"
 #include "qemu/log.h"
@@ -166,20 +167,25 @@ static void nvram_store(ANSGBusState *s, unsigned idx, uint8_t val)
 
 /* EPROM */
 
+/*
+ * Address bytes in MACE wire (bit-reversed) order, $AA, then the
+ * inverse of the XOR of the first seven bytes; the second half is the
+ * complement of the first.
+ */
 static void eprom_fill(ANSGBusState *s)
 {
-    uint8_t x = 0;
+    uint8_t x = 0xaa;
     int i;
 
     for (i = 0; i < 6; i++) {
-        s->eprom[i] = s->macaddr.a[i];
-        s->eprom[8 + i] = ~s->macaddr.a[i];
-        x ^= s->macaddr.a[i];
+        s->eprom[i] = revbit8(s->macaddr.a[i]);
+        x ^= s->eprom[i];
     }
     s->eprom[6] = 0xaa;
     s->eprom[7] = ~x;
-    s->eprom[14] = 0x55;
-    s->eprom[15] = ~x;
+    for (i = 0; i < 8; i++) {
+        s->eprom[8 + i] = ~s->eprom[i];
+    }
 }
 
 static uint8_t gbus_read_byte(ANSGBusState *s, hwaddr addr, bool wide)
