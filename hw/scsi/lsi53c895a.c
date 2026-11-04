@@ -443,6 +443,22 @@ static void lsi_soft_reset(LSIState *s)
     timer_del(s->select_timer);
 }
 
+static void lsi_update_irq(LSIState *s);
+
+static void lsi_chip_reset(LSIState *s)
+{
+    lsi_request *p, *p_next;
+
+    if (s->current) {
+        scsi_req_cancel(s->current->req);
+    }
+    QTAILQ_FOREACH_SAFE(p, &s->queue, next, p_next) {
+        scsi_req_cancel(p->req);
+    }
+    lsi_soft_reset(s);
+    lsi_update_irq(s);
+}
+
 static int lsi_dma_40bit(LSIState *s)
 {
     if ((s->ccntl1 & LSI_CCNTL1_40BIT) == LSI_CCNTL1_40BIT)
@@ -2106,7 +2122,8 @@ static void lsi_reg_writeb(LSIState *s, int offset, uint8_t val)
     case 0x14: /* ISTAT0 */
         s->istat0 = (s->istat0 & 0x0f) | (val & 0xf0);
         if (val & LSI_ISTAT0_SRST) {
-            device_cold_reset(DEVICE(s));
+            /* the chip core only: PCI configuration and the bus stay */
+            lsi_chip_reset(s);
             return;
         }
         if (val & LSI_ISTAT0_ABRT) {
