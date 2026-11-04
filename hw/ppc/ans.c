@@ -101,6 +101,9 @@ static void ans_cpu_reset(void *opaque)
 
     cpu_ppc_tb_reset(&cpu->env);
     cpu_reset(CPU(cpu));
+    /* hard reset clears the time base */
+    cpu_ppc_store_tbl(&cpu->env, 0);
+    cpu_ppc_store_tbu(&cpu->env, 0);
     /* PLL_CFG straps: the bus-to-core ratio of the CPU card */
     cpu->env.spr[SPR_HID1] = (target_ulong)ams->pll_cfg << 28;
 }
