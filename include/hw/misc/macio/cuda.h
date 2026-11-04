@@ -110,6 +110,7 @@ struct CUDAState {
      * received the periodic tick it was expecting).
      */
     QEMUTimer *one_sec_timer;
+    QEMUTimer *treq_timer;
     uint8_t one_sec_mode;
 
     int data_in_size;

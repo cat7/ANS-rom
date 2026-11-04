@@ -80,6 +80,9 @@
  */
 #define CUDA_SR_DELAY_RETRY         (20 * SCALE_US)
 
+/* end of a sync cycle: ByteAck high to TREQ negated */
+#define CUDA_SYNC_TREQ_DELAY        (20 * SCALE_US)
+
 /* CUDA returns time_t's offset from Jan 1, 1904, not 1970 */
 #define RTC_OFFSET                      2082844800
 
@@ -116,6 +119,7 @@ static uint64_t cuda_get_load_time(MOS6522State *s, MOS6522Timer *ti)
 }
 
 static void cuda_delay_set_sr_int(CUDAState *s, uint64_t delay_ns);
+static void cuda_treq_release(void *opaque);
 
 static void cuda_set_sr_int(void *opaque)
 {
@@ -180,10 +184,28 @@ static void cuda_delay_set_sr_int(CUDAState *s, uint64_t delay_ns)
  */
 static void cuda_sr_int_catch_up(CUDAState *s)
 {
+    if (timer_pending(s->treq_timer) &&
+        qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) >=
+        timer_expire_time_ns(s->treq_timer)) {
+        timer_del(s->treq_timer);
+        cuda_treq_release(s);
+    }
     if (timer_pending(s->sr_delay_timer) &&
         qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) >= s->sr_int_due_ns) {
         timer_del(s->sr_delay_timer);
         cuda_set_sr_int(s);
+    }
+}
+
+static void cuda_treq_release(void *opaque)
+{
+    CUDAState *s = opaque;
+    MOS6522State *ms = MOS6522(&s->mos6522_cuda);
+
+    if ((ms->b & TIP) && (ms->b & TACK) &&
+        (s->data_in_index == 0 || s->data_in_index >= s->data_in_size)) {
+        ms->b |= TREQ;
+        s->last_b = ms->b;
     }
 }
 
@@ -249,10 +271,14 @@ static void cuda_update(CUDAState *s)
              * reply queued behind the scenes) and must not block this
              * sync probe's own handshake.
              */
+            trace_cuda_sync(!!(ms->b & TACK));
             if ((ms->b & TACK) &&
                 (s->data_in_index == 0 || s->data_in_index >= s->data_in_size)) {
-                ms->b = (ms->b | TREQ);
+                /* the firmware negates TREQ some time after ByteAck rises */
+                timer_mod(s->treq_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)
+                                         + CUDA_SYNC_TREQ_DELAY);
             } else {
+                timer_del(s->treq_timer);
                 ms->b = (ms->b & ~TREQ);
             }
             cuda_delay_set_sr_int(s, CUDA_SR_DELAY_TIP_PULSE);
@@ -1082,6 +1108,7 @@ static void cuda_reset(DeviceState *dev)
 
     s->one_sec_mode = 0;
     timer_del(s->one_sec_timer);
+    timer_del(s->treq_timer);
 
     adb_set_autopoll_enabled(adb_bus, false);
 }
@@ -1106,6 +1133,7 @@ static void cuda_realize(DeviceState *dev, Error **errp)
 
     s->sr_delay_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, cuda_set_sr_int, s);
     s->one_sec_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, cuda_one_sec_tick, s);
+    s->treq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, cuda_treq_release, s);
 
     adb_register_autopoll_callback(adb_bus, cuda_adb_poll, s);
 
