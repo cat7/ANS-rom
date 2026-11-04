@@ -1,6 +1,9 @@
 config DP8393X
     bool
 
+config MACE
+    bool
+
 config BMAC
     bool
 
