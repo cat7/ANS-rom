@@ -95,6 +95,7 @@ typedef struct SCSIDiskReq {
 #define SCSI_DISK_F_REMOVABLE             0
 #define SCSI_DISK_F_DPOFUA                1
 #define SCSI_DISK_F_NO_REMOVABLE_DEVOPS   2
+#define SCSI_DISK_F_IBM_SCSD              3
 
 struct SCSIDiskState {
     SCSIDevice qdev;
@@ -683,6 +684,41 @@ static int scsi_disk_emulate_vpd_page(SCSIRequest *req, uint8_t *outbuf)
             outbuf[buflen++] = 0xb1; /* block device characteristics */
             outbuf[buflen++] = 0xb2; /* thin provisioning */
         }
+        if (s->features & (1 << SCSI_DISK_F_IBM_SCSD)) {
+            outbuf[buflen++] = 0xc7; /* IBM self-configuring SCSI device */
+        }
+        break;
+    }
+    case 0xc7: /* IBM SCSD: what AIX configures an unknown disk from */
+    {
+        uint64_t nb_sectors;
+        uint32_t mb;
+
+        if (!(s->features & (1 << SCSI_DISK_F_IBM_SCSD))) {
+            return -1;
+        }
+        blk_get_geometry(s->qdev.conf.blk, &nb_sectors);
+        mb = (nb_sectors * BDRV_SECTOR_SIZE) / MiB;
+        memset(outbuf + buflen, 0, 113);
+        outbuf[4] = 4;                  /* keyword length */
+        memcpy(&outbuf[5], "SCDD", 4);
+        outbuf[9] = 1;                  /* LUNs */
+        stl_be_p(&outbuf[10], mb);      /* capacity, MB */
+        outbuf[20] = 1;                 /* queue depth */
+        outbuf[23] = 100;               /* ready after reset, ms */
+        outbuf[33] = 0x02;              /* technology: SCSI disk */
+        outbuf[34] = 0x01;              /* interface: single-ended */
+        outbuf[36] = 30;                /* read/write timeout, s */
+        outbuf[38] = 120;               /* write buffer timeout */
+        outbuf[40] = 120;               /* read buffer timeout */
+        outbuf[42] = 120;               /* send diagnostic timeout */
+        stw_be_p(&outbuf[43], 600);     /* format unit timeout */
+        outbuf[46] = 60;                /* start unit timeout */
+        outbuf[48] = 120;               /* reassign block timeout */
+        outbuf[59] = 3;                 /* OS id length */
+        memcpy(&outbuf[60], "AIX", 3);
+        outbuf[72] = 3;                 /* retry count */
+        buflen += 113;
         break;
     }
     case 0x80: /* Device serial number, optional */
@@ -3358,6 +3394,8 @@ static const Property scsi_hd_properties[] = {
                     SCSI_DISK_F_REMOVABLE, false),
     DEFINE_PROP_BIT("dpofua", SCSIDiskState, features,
                     SCSI_DISK_F_DPOFUA, true),
+    DEFINE_PROP_BIT("ibm-scsd", SCSIDiskState, features,
+                    SCSI_DISK_F_IBM_SCSD, false),
     DEFINE_PROP_UINT64("wwn", SCSIDiskState, qdev.wwn, 0),
     DEFINE_PROP_UINT64("port_wwn", SCSIDiskState, qdev.port_wwn, 0),
     DEFINE_PROP_UINT16("port_index", SCSIDiskState, port_index, 0),

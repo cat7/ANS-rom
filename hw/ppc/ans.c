@@ -344,6 +344,12 @@ static void ans_instance_init(Object *obj)
 static void ans_machine_class_init(ObjectClass *oc, const void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
+    /* AIX sizes and configures its disks from IBM's SCSD inquiry page */
+    static GlobalProperty compat[] = {
+        { "scsi-hd", "ibm-scsd", "on" },
+    };
+
+    compat_props_add(mc->compat_props, compat, G_N_ELEMENTS(compat));
 
     mc->desc = "Apple Network Server 700/200";
     mc->init = ans_init;
