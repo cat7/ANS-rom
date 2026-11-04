@@ -879,10 +879,32 @@ static bool cuda_cmd_set_pram(CUDAState *s,
     return true;
 }
 
+/* one bit per ADB address with a device on it, high byte first */
+static bool cuda_cmd_get_device_list(CUDAState *s,
+                                     const uint8_t *in_data, int in_len,
+                                     uint8_t *out_data, int *out_len)
+{
+    ADBBusState *adb_bus = &s->adb_bus;
+    uint16_t mask = 0;
+    int i;
+
+    if (in_len != 0) {
+        return false;
+    }
+    for (i = 0; i < adb_bus->nb_devices; i++) {
+        mask |= 1 << (adb_bus->devices[i]->devaddr & 0xf);
+    }
+    out_data[0] = mask >> 8;
+    out_data[1] = mask;
+    *out_len = 2;
+    return true;
+}
+
 static const CudaCommand handlers[] = {
     { CUDA_AUTOPOLL, "AUTOPOLL", cuda_cmd_autopoll },
     { CUDA_SET_AUTO_RATE, "SET_AUTO_RATE",  cuda_cmd_set_autorate },
     { CUDA_SET_DEVICE_LIST, "SET_DEVICE_LIST", cuda_cmd_set_device_list },
+    { CUDA_GET_DEVICE_LIST, "GET_DEVICE_LIST", cuda_cmd_get_device_list },
     { CUDA_POWERDOWN, "POWERDOWN", cuda_cmd_powerdown },
     { CUDA_RESET_SYSTEM, "RESET_SYSTEM", cuda_cmd_reset_system },
     { CUDA_FILE_SERVER_FLAG, "FILE_SERVER_FLAG",
