@@ -2805,6 +2805,11 @@ static void cirrus_reset(void *opaque)
         s->vga.sr[0x0f] = 0x98;
         s->vga.sr[0x17] = 0x20;
         s->vga.sr[0x15] = 0x04; /* memory size, 3=2MB, 4=4MB */
+    } else if (s->vga.vram_size == MiB) {
+        s->vga.sr[0x1F] = 0x22;         // MemClock
+        s->vga.sr[0x0F] = CIRRUS_MEMSIZE_1M;
+        s->vga.sr[0x17] = s->bustype;
+        s->vga.sr[0x15] = 0x02; /* memory size, 2=1MB */
     } else {
         s->vga.sr[0x1F] = 0x22;         // MemClock
         s->vga.sr[0x0F] = CIRRUS_MEMSIZE_2M;
@@ -2919,6 +2924,7 @@ void cirrus_init_common(CirrusVGAState *s, Object *owner,
 
     s->real_vram_size =
         (s->device_id == CIRRUS_ID_CLGD5446) ? 4 * MiB : 2 * MiB;
+    s->real_vram_size = MIN(s->real_vram_size, s->vga.vram_size);
 
     /* XXX: s->vga.vram_size must be a power of two */
     s->cirrus_addr_mask = s->real_vram_size - 1;
@@ -2952,7 +2958,10 @@ static void pci_cirrus_vga_realize(PCIDevice *dev, Error **errp)
      * Follow real hardware, cirrus card emulated has 4 MB video memory.
      * Also accept 8 MB/16 MB for backward compatibility.
      */
-    if (s->vga.vram_size_mb != 4 && s->vga.vram_size_mb != 8 &&
+    if (device_id == CIRRUS_ID_CLGD5430 && s->vga.vram_size_mb == 4) {
+        /* the 54M30 carries 1 MB */
+        s->vga.vram_size_mb = 1;
+    } else if (s->vga.vram_size_mb != 4 && s->vga.vram_size_mb != 8 &&
         s->vga.vram_size_mb != 16) {
         error_setg(errp, "Invalid cirrus_vga ram size '%u'",
                    s->vga.vram_size_mb);
@@ -2967,12 +2976,20 @@ static void pci_cirrus_vga_realize(PCIDevice *dev, Error **errp)
     s->vga.con = qemu_graphic_console_create(DEVICE(dev), 0, s->vga.hw_ops, &s->vga);
 
     /* setup PCI */
-    memory_region_init(&s->pci_bar, OBJECT(dev), "cirrus-pci-bar0", 0x2000000);
+    if (device_id == CIRRUS_ID_CLGD5430) {
+        pci_set_long(dev->config + PCI_SUBSYSTEM_VENDOR_ID, 0);
+        memory_region_init(&s->pci_bar, OBJECT(dev), "cirrus-pci-bar0",
+                           0x1000000);
+        memory_region_add_subregion(&s->pci_bar, 0, &s->cirrus_linear_io);
+    } else {
+        memory_region_init(&s->pci_bar, OBJECT(dev), "cirrus-pci-bar0",
+                           0x2000000);
 
-    /* XXX: add byte swapping apertures */
-    memory_region_add_subregion(&s->pci_bar, 0, &s->cirrus_linear_io);
-    memory_region_add_subregion(&s->pci_bar, 0x1000000,
-                                &s->cirrus_linear_bitblt_io);
+        /* XXX: add byte swapping apertures */
+        memory_region_add_subregion(&s->pci_bar, 0, &s->cirrus_linear_io);
+        memory_region_add_subregion(&s->pci_bar, 0x1000000,
+                                    &s->cirrus_linear_bitblt_io);
+    }
 
     /* setup memory space */
     /* memory #0 LFB */
@@ -3019,9 +3036,27 @@ static const TypeInfo cirrus_vga_info = {
     },
 };
 
+/* Cirrus 54M30: CL-GD5430 core, 1 MB, no expansion ROM */
+static void cirrus_54m30_class_init(ObjectClass *klass, const void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
+
+    k->romfile = NULL;
+    k->device_id = CIRRUS_ID_CLGD5430;
+    dc->desc = "Cirrus 54M30";
+}
+
+static const TypeInfo cirrus_54m30_info = {
+    .name          = "cirrus-54m30",
+    .parent        = TYPE_PCI_CIRRUS_VGA,
+    .class_init    = cirrus_54m30_class_init,
+};
+
 static void cirrus_vga_register_types(void)
 {
     type_register_static(&cirrus_vga_info);
+    type_register_static(&cirrus_54m30_info);
 }
 
 type_init(cirrus_vga_register_types)
