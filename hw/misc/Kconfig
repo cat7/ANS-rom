@@ -266,3 +266,6 @@ config AXIADO_CLK
     bool
 
 source macio/Kconfig
+
+config HAMMERHEAD
+    bool

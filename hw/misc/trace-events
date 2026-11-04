@@ -446,3 +446,8 @@ iommu_testdev_dma_read(uint64_t gva, uint32_t len) "gva=0x%" PRIx64 " len=%u"
 iommu_testdev_dma_verify(uint32_t expected, uint32_t actual) "expected=0x%x actual=0x%x"
 iommu_testdev_dma_result(uint32_t result) "DMA completed result=0x%x"
 iommu_testdev_dma_armed(bool armed) "armed=%d"
+
+# hammerhead.c
+hammerhead_read(uint64_t addr, unsigned size, uint64_t val) "0x%03"PRIx64" size %u -> 0x%"PRIx64
+hammerhead_write(uint64_t addr, unsigned size, uint64_t val) "0x%03"PRIx64" size %u = 0x%"PRIx64
+hammerhead_bank(int bank, uint32_t base, uint32_t size, uint32_t window) "bank %d: 0x%x bytes at 0x%08x window 0x%x"
