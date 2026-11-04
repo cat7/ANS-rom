@@ -55,3 +55,9 @@ dbdma_store_word(int channel, uint32_t addr, int len, uint32_t value) "channel=0
 
 # mac_dbdma.c
 dbdma_io_latency(int channel, int64_t ns, int is_last) "ch=%d latency=%"PRId64"ns last=%d"
+
+# ans_gbus.c
+ans_gbus_read(uint64_t addr, unsigned size, uint64_t val) "+0x%05"PRIx64" size %u -> 0x%"PRIx64
+ans_gbus_write(uint64_t addr, unsigned size, uint64_t val) "+0x%05"PRIx64" size %u = 0x%"PRIx64
+ans_lcd_command(uint8_t cmd) "0x%02x"
+ans_lcd_line(int line, const char *text) "line %d: \"%s\""
