@@ -91,7 +91,7 @@ static void macio_bar_setup(MacIOState *s)
     macio_escc_legacy_setup(s);
 }
 
-static bool macio_common_realize(PCIDevice *d, Error **errp)
+static bool macio_common_children(PCIDevice *d, Error **errp)
 {
     MacIOState *s = MACIO(d);
     SysBusDevice *sbd;
@@ -113,6 +113,17 @@ static bool macio_common_realize(PCIDevice *d, Error **errp)
     }
 
     macio_bar_setup(s);
+
+    return true;
+}
+
+static bool macio_common_realize(PCIDevice *d, Error **errp)
+{
+    MacIOState *s = MACIO(d);
+
+    if (!macio_common_children(d, errp)) {
+        return false;
+    }
     pci_register_bar(d, 0, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->bar);
 
     return true;
@@ -522,6 +533,142 @@ static void macio_oldworld_class_init(ObjectClass *oc, const void *data)
     dc->vmsd = &vmstate_macio_oldworld;
 }
 
+/*
+ * Grand Central (343S1125), the TNT and Network Server I/O controller.
+ * It has no BAR: the board decodes its 128 KB island at a fixed
+ * address through the bridge's pass-through window, so the machine maps
+ * the "bar" region itself.
+ */
+static void macio_grandcentral_realize(PCIDevice *d, Error **errp)
+{
+    MacIOState *s = MACIO(d);
+    GrandCentralMacIOState *gs = GRAND_CENTRAL_MACIO(d);
+    DeviceState *pic_dev = DEVICE(&gs->pic);
+    SysBusDevice *sbd;
+
+    if (!macio_common_children(d, errp)) {
+        return;
+    }
+    pci_set_byte(&d->config[PCI_REVISION_ID], 2);
+    pci_set_long(&d->config[PCI_SUBSYSTEM_VENDOR_ID], 0);
+
+    if (!qdev_realize(DEVICE(&gs->pic), BUS(&s->macio_bus), errp)) {
+        return;
+    }
+    sbd = SYS_BUS_DEVICE(&gs->pic);
+    memory_region_add_subregion(&s->bar, 0x20,
+                                sysbus_mmio_get_region(sbd, 0));
+
+    qdev_prop_set_uint64(DEVICE(&s->cuda), "timebase-frequency",
+                         s->frequency);
+    if (!qdev_realize(DEVICE(&s->cuda), BUS(&s->macio_bus), errp)) {
+        return;
+    }
+    sbd = SYS_BUS_DEVICE(&s->cuda);
+    memory_region_add_subregion(&s->bar, 0x16000,
+                                sysbus_mmio_get_region(sbd, 0));
+    sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(pic_dev, GC_CUDA_IRQ));
+
+    sbd = SYS_BUS_DEVICE(&s->escc);
+    sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(pic_dev, GC_ESCCB_IRQ));
+    sysbus_connect_irq(sbd, 1, qdev_get_gpio_in(pic_dev, GC_ESCCA_IRQ));
+    sysbus_connect_irq(sbd, 2,
+                       qdev_get_gpio_in(pic_dev, OLDWORLD_ESCCB_TX_DMA_IRQ));
+    sysbus_connect_irq(sbd, 3,
+                       qdev_get_gpio_in(pic_dev, OLDWORLD_ESCCB_RX_DMA_IRQ));
+    sysbus_connect_irq(sbd, 4,
+                       qdev_get_gpio_in(pic_dev, OLDWORLD_ESCCA_TX_DMA_IRQ));
+    sysbus_connect_irq(sbd, 5,
+                       qdev_get_gpio_in(pic_dev, OLDWORLD_ESCCA_RX_DMA_IRQ));
+    escc_register_dma(&s->escc, &s->dbdma);
+
+    /* 53C94, external SCSI bus */
+    gs->esp.it_shift = 4;
+    gs->esp.esp.dma_memory_read = NULL;
+    gs->esp.esp.dma_memory_write = NULL;
+    gs->esp.esp.dma_opaque = NULL;
+    gs->esp.esp.dma_enabled = 1;
+    if (!qdev_realize(DEVICE(&gs->esp), BUS(&s->macio_bus), errp)) {
+        return;
+    }
+    sbd = SYS_BUS_DEVICE(&gs->esp);
+    memory_region_add_subregion(&s->bar, 0x10000,
+                                sysbus_mmio_get_region(sbd, 0));
+    sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(pic_dev, GC_SCSI_IRQ));
+
+    if (!qdev_realize(DEVICE(&gs->mace), BUS(&s->macio_bus), errp)) {
+        return;
+    }
+    sbd = SYS_BUS_DEVICE(&gs->mace);
+    memory_region_add_subregion(&s->bar, 0x11000,
+                                sysbus_mmio_get_region(sbd, 0));
+    sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(pic_dev, GC_MACE_IRQ));
+
+    if (!qdev_realize(DEVICE(&gs->awacs), BUS(&s->macio_bus), errp)) {
+        return;
+    }
+    sbd = SYS_BUS_DEVICE(&gs->awacs);
+    memory_region_add_subregion(&s->bar, 0x14000,
+                                sysbus_mmio_get_region(sbd, 0));
+    sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(pic_dev, GC_AWACS_IRQ));
+    sysbus_connect_irq(sbd, 1,
+                       qdev_get_gpio_in(pic_dev, OLDWORLD_AWACS_DMA_IRQ));
+    awacs_register_dma(&gs->awacs, &s->dbdma);
+
+    if (!qdev_realize(DEVICE(&gs->swim), BUS(&s->macio_bus), errp)) {
+        return;
+    }
+    sbd = SYS_BUS_DEVICE(&gs->swim);
+    memory_region_add_subregion(&s->bar, 0x15000,
+                                sysbus_mmio_get_region(sbd, 0));
+    sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(pic_dev, GC_SWIM_IRQ));
+    sysbus_connect_irq(sbd, 1, qdev_get_gpio_in(pic_dev, GC_SWIM_DMA_IRQ));
+    swim3_register_dma(&gs->swim, &s->dbdma);
+
+    if (!qdev_realize(DEVICE(&gs->gbus), BUS(&s->macio_bus), errp)) {
+        return;
+    }
+    sbd = SYS_BUS_DEVICE(&gs->gbus);
+    memory_region_add_subregion(&s->bar, ANS_GBUS_OFFSET,
+                                sysbus_mmio_get_region(sbd, 0));
+}
+
+static void macio_grandcentral_init(Object *obj)
+{
+    MacIOState *s = MACIO(obj);
+    GrandCentralMacIOState *gs = GRAND_CENTRAL_MACIO(obj);
+
+    /* the island decodes 128 KB */
+    memory_region_set_size(&s->bar, 0x20000);
+    object_initialize_child(obj, "pic", &gs->pic, TYPE_GRAND_CENTRAL_PIC);
+    object_initialize_child(obj, "cuda", &s->cuda, TYPE_CUDA);
+    object_initialize_child(obj, "esp", &gs->esp, TYPE_SYSBUS_ESP);
+    object_initialize_child(obj, "mace", &gs->mace, TYPE_MACE);
+    object_initialize_child(obj, "awacs", &gs->awacs, TYPE_AWACS);
+    object_initialize_child(obj, "swim", &gs->swim, TYPE_SWIM3);
+    object_initialize_child(obj, "gbus", &gs->gbus, TYPE_ANS_GBUS);
+}
+
+static const VMStateDescription vmstate_macio_grandcentral = {
+    .name = "macio-grandcentral",
+    .version_id = 0,
+    .minimum_version_id = 0,
+    .fields = (const VMStateField[]) {
+        VMSTATE_PCI_DEVICE(parent_obj.parent, GrandCentralMacIOState),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static void macio_grandcentral_class_init(ObjectClass *oc, const void *data)
+{
+    PCIDeviceClass *pdc = PCI_DEVICE_CLASS(oc);
+    DeviceClass *dc = DEVICE_CLASS(oc);
+
+    pdc->realize = macio_grandcentral_realize;
+    pdc->device_id = PCI_DEVICE_ID_APPLE_GRAND_CENTRAL;
+    dc->vmsd = &vmstate_macio_grandcentral;
+}
+
 static const VMStateDescription vmstate_macio_newworld = {
     .name = "macio-newworld",
     .version_id = 0,
@@ -585,6 +732,14 @@ static const TypeInfo macio_newworld_type_info = {
     .class_init    = macio_newworld_class_init,
 };
 
+static const TypeInfo macio_grandcentral_type_info = {
+    .name          = TYPE_GRAND_CENTRAL_MACIO,
+    .parent        = TYPE_MACIO,
+    .instance_size = sizeof(GrandCentralMacIOState),
+    .instance_init = macio_grandcentral_init,
+    .class_init    = macio_grandcentral_class_init,
+};
+
 static const TypeInfo macio_type_info = {
     .name          = TYPE_MACIO,
     .parent        = TYPE_PCI_DEVICE,
@@ -604,6 +759,7 @@ static void macio_register_types(void)
     type_register_static(&macio_type_info);
     type_register_static(&macio_oldworld_type_info);
     type_register_static(&macio_newworld_type_info);
+    type_register_static(&macio_grandcentral_type_info);
 }
 
 type_init(macio_register_types)

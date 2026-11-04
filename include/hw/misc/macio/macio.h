@@ -30,6 +30,10 @@
 #include "hw/pci/pci_device.h"
 #include "hw/ide/ide-bus.h"
 #include "hw/intc/heathrow_pic.h"
+#include "hw/intc/grand_central_pic.h"
+#include "hw/misc/macio/ans_gbus.h"
+#include "hw/net/mace.h"
+#include "hw/scsi/esp.h"
 #include "hw/misc/macio/cuda.h"
 #include "hw/misc/macio/gpio.h"
 #include "hw/misc/macio/pmu.h"
@@ -170,6 +174,36 @@ struct NewWorldMacIOState {
     OpenPICState pic;
     MACIOIDEState ide[2];
     MacIOGPIOState gpio;
+};
+
+/* Grand Central IRQs */
+#define GC_SCSI_DMA_IRQ     0x00
+#define GC_SWIM_DMA_IRQ     0x01
+#define GC_ENET_TX_DMA_IRQ  0x02
+#define GC_ENET_RX_DMA_IRQ  0x03
+#define GC_SCSI_IRQ         0x0c
+#define GC_MACE_IRQ         0x0e
+#define GC_ESCCA_IRQ        0x0f
+#define GC_ESCCB_IRQ        0x10
+#define GC_AWACS_IRQ        0x11
+#define GC_CUDA_IRQ         0x12
+#define GC_SWIM_IRQ         0x13
+#define GC_EXT_IRQ(n)       (0x14 + (n))
+
+#define TYPE_GRAND_CENTRAL_MACIO "macio-grandcentral"
+OBJECT_DECLARE_SIMPLE_TYPE(GrandCentralMacIOState, GRAND_CENTRAL_MACIO)
+
+struct GrandCentralMacIOState {
+    /*< private >*/
+    MacIOState parent_obj;
+    /*< public >*/
+
+    GrandCentralPICState pic;
+    SysBusESPState esp;
+    MACEState mace;
+    AWACSState awacs;
+    Swim3State swim;
+    ANSGBusState gbus;
 };
 
 #endif /* MACIO_H */
