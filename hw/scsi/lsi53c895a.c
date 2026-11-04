@@ -310,6 +310,7 @@ struct LSIState {
 };
 
 #define TYPE_LSI53C810  "lsi53c810"
+#define TYPE_LSI53C825A "lsi53c825a"
 #define TYPE_LSI53C895A "lsi53c895a"
 
 OBJECT_DECLARE_SIMPLE_TYPE(LSIState, LSI53C895A)
@@ -1747,7 +1748,9 @@ static uint8_t lsi_reg_readb(LSIState *s, int offset)
         }
         break;
     case 0x1b: /* CTEST3 */
-        ret = s->ctest3;
+        /* V[3:0] mirrors the low nibble of the PCI Revision ID */
+        ret = (s->ctest3 & 0x0f) |
+              (pci_get_byte(PCI_DEVICE(s)->config + PCI_REVISION_ID) << 4);
         break;
     CASE_GET_REG32(temp, 0x1c)
     case 0x20: /* DFIFO */
@@ -2364,10 +2367,19 @@ static void lsi_scsi_realize(PCIDevice *dev, Error **errp)
     /* Interrupt pin A */
     pci_conf[PCI_INTERRUPT_PIN] = 0x01;
 
-    memory_region_init_io(&s->mmio_io, OBJECT(s), &lsi_mmio_ops, s,
-                          "lsi-mmio", 0x400);
-    memory_region_init_io(&s->ram_io, OBJECT(s), &lsi_ram_ops, s,
-                          "lsi-ram", 0x2000);
+    if (PCI_DEVICE_GET_CLASS(dev)->device_id == PCI_DEVICE_ID_LSI_53C825) {
+        /* no subsystem EEPROM; 256 bytes of registers, 4 KB SCRIPTS RAM */
+        pci_set_long(pci_conf + PCI_SUBSYSTEM_VENDOR_ID, 0);
+        memory_region_init_io(&s->mmio_io, OBJECT(s), &lsi_mmio_ops, s,
+                              "lsi-mmio", 0x100);
+        memory_region_init_io(&s->ram_io, OBJECT(s), &lsi_ram_ops, s,
+                              "lsi-ram", 0x1000);
+    } else {
+        memory_region_init_io(&s->mmio_io, OBJECT(s), &lsi_mmio_ops, s,
+                              "lsi-mmio", 0x400);
+        memory_region_init_io(&s->ram_io, OBJECT(s), &lsi_ram_ops, s,
+                              "lsi-ram", 0x2000);
+    }
     memory_region_init_io(&s->io_io, OBJECT(s), &lsi_io_ops, s,
                           "lsi-io", 256);
     s->scripts_timer = timer_new_us(QEMU_CLOCK_VIRTUAL, scripts_timer_cb, s);
@@ -2438,10 +2450,26 @@ static const TypeInfo lsi53c810_info = {
     .class_init    = lsi53c810_class_init,
 };
 
+static void lsi53c825a_class_init(ObjectClass *klass, const void *data)
+{
+    PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
+
+    k->device_id = PCI_DEVICE_ID_LSI_53C825;
+    k->revision = 0x14;
+    k->subsystem_id = 0;
+}
+
+static const TypeInfo lsi53c825a_info = {
+    .name          = TYPE_LSI53C825A,
+    .parent        = TYPE_LSI53C895A,
+    .class_init    = lsi53c825a_class_init,
+};
+
 static void lsi53c895a_register_types(void)
 {
     type_register_static(&lsi_info);
     type_register_static(&lsi53c810_info);
+    type_register_static(&lsi53c825a_info);
 }
 
 type_init(lsi53c895a_register_types)
