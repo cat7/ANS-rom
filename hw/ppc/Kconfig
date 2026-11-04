@@ -142,6 +142,20 @@ config MAC_OLDWORLD
     select SMBUS_EEPROM
     select FW_CFG_PPC
 
+config ANS700
+    bool
+    default y
+    depends on PPC
+    imply PCI_DEVICES
+    select ADB
+    select BANDIT_PCI
+    select HAMMERHEAD
+    select MACIO
+    select AWACS
+    select SWIM3
+    select LSI_SCSI_PCI
+    select VGA_CIRRUS
+
 config MAC_NEWWORLD
     bool
     default y
