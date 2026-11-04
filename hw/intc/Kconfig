@@ -1,3 +1,6 @@
+config GRAND_CENTRAL_PIC
+    bool
+
 config HEATHROW_PIC
     bool
 

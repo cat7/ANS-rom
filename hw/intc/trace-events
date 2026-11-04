@@ -365,3 +365,8 @@ loongarch_extioi_writew(uint64_t addr, uint64_t val) "addr: 0x%"PRIx64 "val: 0x%
 # riscv_aplic.c
 riscv_aplic_read(uint64_t offset, unsigned size, uint64_t value) "offset: 0x%" PRIx64 ", size: %u, value: 0x%" PRIx64
 riscv_aplic_write(uint64_t offset, unsigned size, uint64_t value) "offset: 0x%" PRIx64 ", size: %u, value: 0x%" PRIx64
+
+# grand_central_pic.c
+grand_central_pic_set_irq(int n, int level) "irq %d level %d"
+grand_central_pic_read(uint64_t addr, uint32_t val) "0x%"PRIx64" -> 0x%08x"
+grand_central_pic_write(uint64_t addr, uint64_t val) "0x%"PRIx64" = 0x%"PRIx64
