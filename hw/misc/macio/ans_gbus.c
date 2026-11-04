@@ -142,8 +142,10 @@ static void lcd_data(ANSGBusState *s, uint8_t ch)
         s->ddram[s->lcd_addr & (ANS_LCD_DDRAM - 1)] = ch;
     }
     s->lcd_addr = (s->lcd_addr + (s->lcd_inc ? 1 : -1)) & (ANS_LCD_DDRAM - 1);
-    timer_mod(s->lcd_timer,
-              qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 50);
+    if (!timer_pending(s->lcd_timer)) {
+        timer_mod(s->lcd_timer,
+                  qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 50);
+    }
 }
 
 /* NVRAM */
