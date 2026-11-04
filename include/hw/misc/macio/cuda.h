@@ -129,6 +129,8 @@ struct CUDAState {
      * invocations instead of resetting to zero every boot. */
     uint8_t pram[256];
     BlockBackend *pram_blk;
+    /* create pram.img in the working directory when no drive is given */
+    bool default_pram;
 };
 
 #endif /* CUDA_H */

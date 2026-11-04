@@ -1073,7 +1073,7 @@ static void cuda_realize(DeviceState *dev, Error **errp)
 
     adb_register_autopoll_callback(adb_bus, cuda_adb_poll, s);
 
-    if (!s->pram_blk) {
+    if (!s->pram_blk && s->default_pram) {
         s->pram_blk = cuda_default_pram_blk();
     }
 
@@ -1121,6 +1121,7 @@ static void cuda_init(Object *obj)
 static const Property cuda_properties[] = {
     DEFINE_PROP_UINT64("timebase-frequency", CUDAState, tb_frequency, 0),
     DEFINE_PROP_DRIVE("drive", CUDAState, pram_blk),
+    DEFINE_PROP_BOOL("default-pram", CUDAState, default_pram, true),
 };
 
 static void cuda_class_init(ObjectClass *oc, const void *data)
