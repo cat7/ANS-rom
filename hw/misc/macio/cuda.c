@@ -57,6 +57,7 @@
 
 /* status byte (2nd byte) of an ADB_PACKET reply */
 #define ADB_STAT_RESPONSE 0x80
+#define ADB_STAT_TIMEOUT  0x02
 
 #define CUDA_TIMER_FREQ (4700000 / 6)
 
@@ -991,7 +992,10 @@ static void cuda_receive_packet_from_host(CUDAState *s,
              * which every device acknowledges but none of them talk back
              * on), not just "no data".
              */
-            if (olen >= 0) {
+            if (olen == 0 && len > 1 && (data[1] & 0x0c) == 0x0c) {
+                /* a Talk the device left unanswered times out */
+                obuf[1] = ADB_STAT_RESPONSE | ADB_STAT_TIMEOUT;
+            } else if (olen >= 0) {
                 obuf[1] = ADB_STAT_RESPONSE;
             } else {
                 obuf[1] = ADB_STAT_RESPONSE | -olen;
