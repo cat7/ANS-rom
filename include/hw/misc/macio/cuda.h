@@ -118,6 +118,8 @@ struct CUDAState {
     int data_out_index;
     /* a waiting-response SR_INT the host has not read */
     bool sr_attn_unread;
+    /* the host has read SR since the current response was queued */
+    bool sr_attn_taken;
 
     qemu_irq irq;
     uint8_t data_in[128];

@@ -144,16 +144,17 @@ static void cuda_set_sr_int(void *opaque)
 }
 
 /*
- * At the start of a transfer, drop a waiting pulse the host has not
- * read. Left set, the host runs one interrupt ahead, takes the
+ * At the start of a transfer, drop a repeated waiting pulse the host
+ * has not read. Left set, the host runs one interrupt ahead, takes the
  * end-of-transfer interrupt for a new packet and passes a negative
- * byte count to the ADB completion.
+ * byte count to the ADB completion. A host that raises TIP before it
+ * reads the attention byte at all (AIX) still finds that byte's flag.
  */
 static void cuda_drop_stale_sr_int(CUDAState *s)
 {
     MOS6522State *ms = MOS6522(&s->mos6522_cuda);
 
-    if (s->sr_attn_unread) {
+    if (s->sr_attn_unread && s->sr_attn_taken) {
         s->sr_attn_unread = false;
         mos6522_read(ms, VIA_REG_SR, 1);
     }
@@ -337,6 +338,7 @@ static void cuda_send_packet_to_host(CUDAState *s,
     memcpy(s->data_in, data, len);
     s->data_in_size = len;
     s->data_in_index = 0;
+    s->sr_attn_taken = false;
     cuda_update(s);
     /*
      * Draw the guest's attention to a freshly-queued response -- matches
@@ -1047,6 +1049,9 @@ static uint64_t mos6522_cuda_read(void *opaque, hwaddr addr, unsigned size)
     cuda_sr_int_catch_up(s);
     if (addr == VIA_REG_SR) {
         s->sr_attn_unread = false;
+        if (s->data_in_index == 0 && s->data_in_size > 0) {
+            s->sr_attn_taken = true;
+        }
     }
     return mos6522_read(ms, addr, size);
 }
@@ -1104,6 +1109,7 @@ static void cuda_reset(DeviceState *dev)
     s->data_in_size = 0;
     s->data_in_index = 0;
     s->sr_attn_unread = false;
+    s->sr_attn_taken = false;
     s->data_out_index = 0;
 
     s->one_sec_mode = 0;
