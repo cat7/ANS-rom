@@ -2400,6 +2400,12 @@ static int32_t scsi_disk_emulate_command(SCSIRequest *req, uint8_t *buf)
             goto illegal_lba;
         }
         break;
+    case SEND_DIAGNOSTIC:
+        /* self-test or default self-test passes; no diagnostic pages */
+        if (r->req.cmd.xfer) {
+            goto illegal_request;
+        }
+        break;
     case MODE_SELECT:
         trace_scsi_disk_emulate_command_MODE_SELECT(r->req.cmd.xfer);
         break;
@@ -2849,6 +2855,7 @@ static const SCSIReqOps *const scsi_disk_reqops_dispatch[256] = {
     [REQUEST_SENSE]                   = &scsi_disk_emulate_reqops,
     [SYNCHRONIZE_CACHE]               = &scsi_disk_emulate_reqops,
     [SEEK_10]                         = &scsi_disk_emulate_reqops,
+    [SEND_DIAGNOSTIC]                 = &scsi_disk_emulate_reqops,
     [MODE_SELECT]                     = &scsi_disk_emulate_reqops,
     [MODE_SELECT_10]                  = &scsi_disk_emulate_reqops,
     [UNMAP]                           = &scsi_disk_emulate_reqops,
