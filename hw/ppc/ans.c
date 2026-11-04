@@ -344,9 +344,13 @@ static void ans_instance_init(Object *obj)
 static void ans_machine_class_init(ObjectClass *oc, const void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
-    /* AIX sizes and configures its disks from IBM's SCSD inquiry page */
+    /*
+     * AIX sizes and configures its disks from IBM's SCSD inquiry page and
+     * reads a CD-ROM's block length from the MODE SENSE block descriptor.
+     */
     static GlobalProperty compat[] = {
         { "scsi-hd", "ibm-scsd", "on" },
+        { "scsi-cd", "quirk_mode_sense_rom_use_dbd", "on" },
     };
 
     compat_props_add(mc->compat_props, compat, G_N_ELEMENTS(compat));
