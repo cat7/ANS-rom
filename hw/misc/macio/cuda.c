@@ -1129,7 +1129,8 @@ static void cuda_realize(DeviceState *dev, Error **errp)
     sysbus_pass_irq(sbd, SYS_BUS_DEVICE(&s->mos6522_cuda));
 
     qemu_get_timedate(&tm, 0);
-    s->tick_offset = (uint32_t)mktimegm(&tm) + RTC_OFFSET;
+    s->tick_offset = (uint32_t)mktimegm(&tm) +
+                     (s->rtc_unix_epoch ? 0 : RTC_OFFSET);
 
     s->sr_delay_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, cuda_set_sr_int, s);
     s->one_sec_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, cuda_one_sec_tick, s);
@@ -1186,6 +1187,7 @@ static const Property cuda_properties[] = {
     DEFINE_PROP_UINT64("timebase-frequency", CUDAState, tb_frequency, 0),
     DEFINE_PROP_DRIVE("drive", CUDAState, pram_blk),
     DEFINE_PROP_BOOL("default-pram", CUDAState, default_pram, true),
+    DEFINE_PROP_BOOL("rtc-unix-epoch", CUDAState, rtc_unix_epoch, false),
 };
 
 static void cuda_class_init(ObjectClass *oc, const void *data)

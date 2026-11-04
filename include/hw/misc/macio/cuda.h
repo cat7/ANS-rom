@@ -132,6 +132,7 @@ struct CUDAState {
     BlockBackend *pram_blk;
     /* create pram.img in the working directory when no drive is given */
     bool default_pram;
+    bool rtc_unix_epoch;
 };
 
 #endif /* CUDA_H */
