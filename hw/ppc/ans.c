@@ -64,6 +64,7 @@ struct ANSMachineState {
     MachineState parent_obj;
 
     PowerPCCPU *cpu;
+    ANSGBusState *gbus;
     char *keyswitch;
     char *nvram;
     char *lcd;
@@ -190,6 +191,7 @@ static void ans_init(MachineState *machine)
     dev = DEVICE(object_resolve_path_component(gc, "cuda"));
     qdev_prop_set_bit(dev, "default-pram", false);
     dev = DEVICE(object_resolve_path_component(gc, "gbus"));
+    ams->gbus = ANS_GBUS(dev);
     qdev_prop_set_string(dev, "keyswitch", ams->keyswitch);
     qdev_prop_set_bit(dev, "two-supplies", ams->power_supplies == 2);
     if (ams->nvram) {
@@ -247,6 +249,11 @@ static void ans_set_keyswitch(Object *obj, const char *value, Error **errp)
     }
     g_free(ams->keyswitch);
     ams->keyswitch = g_strdup(value);
+    /* the key turns while the machine runs */
+    if (ams->gbus && DEVICE(ams->gbus)->realized) {
+        g_free(ams->gbus->keyswitch);
+        ams->gbus->keyswitch = g_strdup(value);
+    }
 }
 
 static char *ans_get_nvram(Object *obj, Error **errp)
