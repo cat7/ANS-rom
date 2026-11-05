@@ -201,6 +201,18 @@ static uint8_t rop_to_index[256];
 static void cirrus_bitblt_reset(CirrusVGAState *s);
 static void cirrus_update_memory_access(CirrusVGAState *s);
 
+/* SR17[6:2]: BLT registers in the last 256 bytes of the linear space */
+static bool cirrus_linear_mmio(CirrusVGAState *s)
+{
+    return (s->vga.sr[0x17] & 0x44) == 0x44;
+}
+
+/* ... and that space is the display memory window */
+static bool cirrus_linear_mmio_in_vram(CirrusVGAState *s)
+{
+    return cirrus_linear_mmio(s) && !s->is_54m30;
+}
+
 /***************************************
  *
  *  raster operations
@@ -1086,6 +1098,12 @@ static void cirrus_write_bitblt(CirrusVGAState * s, unsigned reg_value)
     old_value = s->vga.gr[0x31];
     s->vga.gr[0x31] = reg_value;
 
+    if (s->is_54m30 && (reg_value & CIRRUS_BLT_RESET)) {
+        /* reset abandons the BLT and holds the engine; no start */
+        cirrus_bitblt_reset(s);
+        s->vga.gr[0x31] = reg_value & ~(CIRRUS_BLT_START | CIRRUS_BLT_BUSY);
+        return;
+    }
     if (((old_value & CIRRUS_BLT_RESET) != 0) &&
         ((reg_value & CIRRUS_BLT_RESET) == 0)) {
         cirrus_bitblt_reset(s);
@@ -2325,7 +2343,7 @@ static uint64_t cirrus_linear_read(void *opaque, hwaddr addr,
 
     addr &= s->cirrus_addr_mask;
 
-    if (((s->vga.sr[0x17] & 0x44) == 0x44) &&
+    if (cirrus_linear_mmio_in_vram(s) &&
         ((addr & s->linear_mmio_mask) == s->linear_mmio_mask)) {
         /* memory-mapped I/O */
         ret = cirrus_mmio_blt_read(s, addr & 0xff);
@@ -2354,7 +2372,7 @@ static void cirrus_linear_write(void *opaque, hwaddr addr,
 
     addr &= s->cirrus_addr_mask;
 
-    if (((s->vga.sr[0x17] & 0x44) == 0x44) &&
+    if (cirrus_linear_mmio_in_vram(s) &&
         ((addr & s->linear_mmio_mask) ==  s->linear_mmio_mask)) {
         /* memory-mapped I/O */
         cirrus_mmio_blt_write(s, addr & 0xff, val);
@@ -2472,7 +2490,11 @@ static void cirrus_update_memory_access(CirrusVGAState *s)
     unsigned mode;
 
     memory_region_transaction_begin();
-    if ((s->vga.sr[0x17] & 0x44) == 0x44) {
+    if (s->is_54m30) {
+        memory_region_set_enabled(&s->cirrus_top_mmio_io,
+                                  cirrus_linear_mmio(s));
+    }
+    if (cirrus_linear_mmio_in_vram(s)) {
         goto generic_io;
     } else if (s->cirrus_srcptr != s->cirrus_srcptr_end) {
         goto generic_io;
@@ -2709,6 +2731,28 @@ static void cirrus_mmio_write(void *opaque, hwaddr addr,
 static const MemoryRegionOps cirrus_mmio_io_ops = {
     .read = cirrus_mmio_read,
     .write = cirrus_mmio_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 1,
+    },
+};
+
+static uint64_t cirrus_top_mmio_read(void *opaque, hwaddr addr,
+                                     unsigned size)
+{
+    return cirrus_mmio_blt_read(opaque, addr);
+}
+
+static void cirrus_top_mmio_write(void *opaque, hwaddr addr,
+                                  uint64_t val, unsigned size)
+{
+    cirrus_mmio_blt_write(opaque, addr, val);
+}
+
+static const MemoryRegionOps cirrus_top_mmio_io_ops = {
+    .read = cirrus_top_mmio_read,
+    .write = cirrus_top_mmio_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
     .impl = {
         .min_access_size = 1,
@@ -2981,6 +3025,13 @@ static void pci_cirrus_vga_realize(PCIDevice *dev, Error **errp)
         memory_region_init(&s->pci_bar, OBJECT(dev), "cirrus-pci-bar0",
                            0x1000000);
         memory_region_add_subregion(&s->pci_bar, 0, &s->cirrus_linear_io);
+        memory_region_init_io(&s->cirrus_top_mmio_io, OBJECT(dev),
+                              &cirrus_top_mmio_io_ops, s, "cirrus-top-mmio",
+                              0x100);
+        memory_region_set_enabled(&s->cirrus_top_mmio_io, false);
+        memory_region_add_subregion(&s->pci_bar, 0x1000000 - 0x100,
+                                    &s->cirrus_top_mmio_io);
+        s->is_54m30 = true;
     } else {
         memory_region_init(&s->pci_bar, OBJECT(dev), "cirrus-pci-bar0",
                            0x2000000);
