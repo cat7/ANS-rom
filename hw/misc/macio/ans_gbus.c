@@ -77,7 +77,7 @@ static uint16_t gbus_breg2(ANSGBusState *s)
 
 /* LCD */
 
-static void lcd_flush(ANSGBusState *s)
+static void lcd_flush(ANSGBusState *s, bool all)
 {
     int line, i;
 
@@ -87,7 +87,7 @@ static void lcd_flush(ANSGBusState *s)
         char out[ANS_LCD_COLS + 16];
         int n;
 
-        if (!memcmp(s->lcd_shown[line], src, ANS_LCD_COLS)) {
+        if (!all && !memcmp(s->lcd_shown[line], src, ANS_LCD_COLS)) {
             continue;
         }
         memcpy(s->lcd_shown[line], src, ANS_LCD_COLS);
@@ -105,7 +105,26 @@ static void lcd_flush(ANSGBusState *s)
 
 static void lcd_timer_cb(void *opaque)
 {
-    lcd_flush(opaque);
+    lcd_flush(opaque, false);
+}
+
+static int lcd_chr_can_read(void *opaque)
+{
+    return 64;
+}
+
+static void lcd_chr_read(void *opaque, const uint8_t *buf, int size)
+{
+}
+
+/* a reader that connects gets all four lines */
+static void lcd_chr_event(void *opaque, QEMUChrEvent event)
+{
+    ANSGBusState *s = opaque;
+
+    if (event == CHR_EVENT_OPENED && DEVICE(s)->realized) {
+        lcd_flush(s, true);
+    }
 }
 
 static void lcd_command(ANSGBusState *s, uint8_t cmd)
@@ -134,7 +153,7 @@ static void lcd_command(ANSGBusState *s, uint8_t cmd)
         s->lcd_addr = 0;
         s->lcd_cgram = false;
     }
-    lcd_flush(s);
+    lcd_flush(s, false);
 }
 
 static void lcd_data(ANSGBusState *s, uint8_t ch)
@@ -358,6 +377,8 @@ static void gbus_realize(DeviceState *dev, Error **errp)
         }
     }
     s->lcd_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL, lcd_timer_cb, s);
+    qemu_chr_fe_set_handlers(&s->lcd_chr, lcd_chr_can_read, lcd_chr_read,
+                             lcd_chr_event, NULL, s, NULL, true);
 }
 
 static void gbus_init(Object *obj)
