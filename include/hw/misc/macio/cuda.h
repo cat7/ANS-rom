@@ -120,6 +120,12 @@ struct CUDAState {
     bool sr_attn_unread;
     /* the host has read SR since the current response was queued */
     bool sr_attn_taken;
+    /* sync cycle ordering (see cuda_sync_access()) */
+    uint8_t sync_hold;
+    bool sync_portb_read;
+    bool sync_treq_owed;
+    bool sync_pulse_held;
+    int64_t sync_hold_limit_ns;
 
     qemu_irq irq;
     uint8_t data_in[128];

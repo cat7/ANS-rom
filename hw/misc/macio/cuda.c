@@ -80,8 +80,24 @@
  */
 #define CUDA_SR_DELAY_RETRY         (20 * SCALE_US)
 
-/* end of a sync cycle: ByteAck high to TREQ negated */
+/* end of a sync cycle: ByteAck high to TREQ negated, at least */
 #define CUDA_SYNC_TREQ_DELAY        (20 * SCALE_US)
+
+/* longest a sync pulse waits for the host's accesses */
+#define CUDA_SYNC_HOLD_MAX          (10 * SCALE_MS)
+
+/*
+ * Sync cycle ordering follows the host's accesses, not host speed: at
+ * the end of a sync TREQ stays asserted until the host has read port B
+ * once (AIX waits for it), and the pulse lands only after the host,
+ * having read port B, has accessed another VIA register (the ROM and
+ * AIX read SR to clear the previous pulse, then wait for this one).
+ */
+enum {
+    CUDA_SYNC_FREE,
+    CUDA_SYNC_WAIT_PORTB,
+    CUDA_SYNC_WAIT_OTHER,
+};
 
 /* CUDA returns time_t's offset from Jan 1, 1904, not 1970 */
 #define RTC_OFFSET                      2082844800
@@ -130,6 +146,19 @@ static void cuda_set_sr_int(void *opaque)
     bool waiting = (ms->b & TIP) && s->data_in_index == 0 &&
                    s->data_in_size > 0;
 
+    if (s->sync_hold != CUDA_SYNC_FREE) {
+        int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+
+        if (now < s->sync_hold_limit_ns) {
+            s->sync_pulse_held = true;
+            s->sr_int_due_ns = s->sync_hold_limit_ns;
+            timer_mod(s->sr_delay_timer, s->sync_hold_limit_ns);
+            return;
+        }
+        s->sync_hold = CUDA_SYNC_FREE;
+        s->sync_pulse_held = false;
+    }
+
     qemu_set_irq(irq, 1);
 
     /*
@@ -166,6 +195,8 @@ static void cuda_delay_set_sr_int(CUDAState *s, uint64_t delay_ns)
 
     trace_cuda_delay_set_sr_int();
 
+    s->sync_hold = CUDA_SYNC_FREE;
+    s->sync_pulse_held = false;
     expire = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + delay_ns;
     s->sr_int_due_ns = expire;
     timer_mod(s->sr_delay_timer, expire);
@@ -203,10 +234,53 @@ static void cuda_treq_release(void *opaque)
     CUDAState *s = opaque;
     MOS6522State *ms = MOS6522(&s->mos6522_cuda);
 
+    if (!s->sync_portb_read) {
+        s->sync_treq_owed = true;
+        return;
+    }
     if ((ms->b & TIP) && (ms->b & TACK) &&
         (s->data_in_index == 0 || s->data_in_index >= s->data_in_size)) {
         ms->b |= TREQ;
         s->last_b = ms->b;
+    }
+}
+
+static void cuda_sync_start(CUDAState *s)
+{
+    s->sync_hold = CUDA_SYNC_WAIT_PORTB;
+    s->sync_hold_limit_ns = s->sr_int_due_ns + CUDA_SYNC_HOLD_MAX;
+    s->sync_portb_read = false;
+    s->sync_treq_owed = false;
+}
+
+/* after each host access to the VIA */
+static void cuda_sync_access(CUDAState *s, hwaddr reg, bool read)
+{
+    bool portb_read = read && reg == VIA_REG_B;
+
+    if (portb_read && !s->sync_portb_read) {
+        s->sync_portb_read = true;
+        if (s->sync_treq_owed) {
+            s->sync_treq_owed = false;
+            cuda_treq_release(s);
+        }
+    }
+    switch (s->sync_hold) {
+    case CUDA_SYNC_WAIT_PORTB:
+        if (portb_read) {
+            s->sync_hold = CUDA_SYNC_WAIT_OTHER;
+        }
+        break;
+    case CUDA_SYNC_WAIT_OTHER:
+        if (reg != VIA_REG_B) {
+            s->sync_hold = CUDA_SYNC_FREE;
+            if (s->sync_pulse_held) {
+                s->sync_pulse_held = false;
+                timer_del(s->sr_delay_timer);
+                cuda_set_sr_int(s);
+            }
+        }
+        break;
     }
 }
 
@@ -283,6 +357,7 @@ static void cuda_update(CUDAState *s)
                 ms->b = (ms->b & ~TREQ);
             }
             cuda_delay_set_sr_int(s, CUDA_SR_DELAY_TIP_PULSE);
+            cuda_sync_start(s);
         } else {
             if (!(s->last_b & TIP)) {
                 /* handle end of host to cuda transfer */
@@ -1044,6 +1119,7 @@ static uint64_t mos6522_cuda_read(void *opaque, hwaddr addr, unsigned size)
     CUDAState *s = opaque;
     MOS6522CUDAState *mcs = &s->mos6522_cuda;
     MOS6522State *ms = MOS6522(mcs);
+    uint64_t val;
 
     addr = (addr >> 9) & 0xf;
     cuda_sr_int_catch_up(s);
@@ -1053,7 +1129,9 @@ static uint64_t mos6522_cuda_read(void *opaque, hwaddr addr, unsigned size)
             s->sr_attn_taken = true;
         }
     }
-    return mos6522_read(ms, addr, size);
+    val = mos6522_read(ms, addr, size);
+    cuda_sync_access(s, addr, true);
+    return val;
 }
 
 static void mos6522_cuda_write(void *opaque, hwaddr addr, uint64_t val,
@@ -1066,6 +1144,7 @@ static void mos6522_cuda_write(void *opaque, hwaddr addr, uint64_t val,
     addr = (addr >> 9) & 0xf;
     cuda_sr_int_catch_up(s);
     mos6522_write(ms, addr, val, size);
+    cuda_sync_access(s, addr, false);
 }
 
 static const MemoryRegionOps mos6522_cuda_ops = {
@@ -1110,6 +1189,10 @@ static void cuda_reset(DeviceState *dev)
     s->data_in_index = 0;
     s->sr_attn_unread = false;
     s->sr_attn_taken = false;
+    s->sync_hold = CUDA_SYNC_FREE;
+    s->sync_portb_read = false;
+    s->sync_treq_owed = false;
+    s->sync_pulse_held = false;
     s->data_out_index = 0;
 
     s->one_sec_mode = 0;
