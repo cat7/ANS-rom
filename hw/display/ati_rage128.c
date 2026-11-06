@@ -4754,6 +4754,7 @@ static void ati_rage128_realize(PCIDevice *dev, Error **errp)
     ATIRage128State *s = ATI_RAGE128(dev);
     Object *obj = OBJECT(dev);
 
+    pci_set_word(dev->config + PCI_DEVICE_ID, s->device_id);
     s->con = qemu_graphic_console_create(DEVICE(dev), 0,
                                          &ati_rage128_gfx_ops, s);
 
@@ -4990,6 +4991,13 @@ static const Property ati_rage128_properties[] = {
     DEFINE_PROP_UINT32("fillwatch-size", ATIRage128State, fillwatch_size, 0),
     DEFINE_PROP_BOOL("monitor-connected", ATIRage128State,
                      monitor_connected, true),
+    /*
+     * PCI device id. Apple's Open Firmware runs the card ROM's FCode only
+     * when it matches the ROM's PCIR id: 0x5046 for the Rage 128 Pro AGP
+     * ROMs.
+     */
+    DEFINE_PROP_UINT16("device-id", ATIRage128State, device_id,
+                       PCI_DEVICE_ID_ATI_RAGE128PRO),
     /* command-stream kicks on a worker thread; auto = on except qtest */
     DEFINE_PROP_ON_OFF_AUTO("async-engine", ATIRage128State, engine_async,
                             ON_OFF_AUTO_AUTO),
@@ -5068,13 +5076,7 @@ static void ati_rage128_class_init(ObjectClass *klass, const void *data)
 
     k->class_id  = PCI_CLASS_DISPLAY_VGA;
     k->vendor_id = PCI_VENDOR_ID_ATI;
-    /*
-     * Must match the PCIR vendor/device of the OEM Mac ROM image
-     * exactly, or Open Firmware refuses to bind the FCode to the
-     * card. 0x5046 "PF" is an AGP-only part on real silicon; QEMU has
-     * no AGP bus and the electrical difference is invisible to
-     * software beyond the (absent) AGP capability block.
-     */
+    /* default only; the device-id property sets it at realize */
     k->device_id = PCI_DEVICE_ID_ATI_RAGE128PRO;
     k->revision  = 0x00;
     /*

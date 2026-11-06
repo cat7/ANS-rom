@@ -309,6 +309,7 @@ struct ATIRage128State {
      * (all sense lines float high).
      */
     bool monitor_connected;
+    uint16_t device_id;
     ATIRage128Mode auto_fb_pending;
 
     /*
