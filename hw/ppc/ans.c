@@ -46,6 +46,7 @@
 #include "chardev/char.h"
 #include "system/system.h"
 #include "system/reset.h"
+#include "system/calib-governor.h"
 #include "target/ppc/cpu.h"
 
 #define ANS_CLOCKFREQ   200000000UL
@@ -146,6 +147,10 @@ static void ans_init(MachineState *machine)
         error_report("ans700 needs the Network Server ROM: -bios <file>");
         exit(1);
     }
+    /* Mac OS times VIA Timer 2 one-shots to calibrate its delay loops */
+    calib_governor_default_on();
+    calib_governor_set_cpu_clock(ANS_CLOCKFREQ);
+
     if (machine->ram_size > 512 * MiB) {
         error_report("the Network Server ROM decodes at most 512 MB of RAM");
         exit(1);
@@ -368,10 +373,17 @@ static void ans_machine_class_init(ObjectClass *oc, const void *data)
     /*
      * AIX sizes and configures its disks from IBM's SCSD inquiry page and
      * reads a CD-ROM's block length from the MODE SENSE block descriptor.
+     * Mac OS's CD driver accepts only an Apple CD-ROM drive.
      */
     static GlobalProperty compat[] = {
         { "scsi-hd", "ibm-scsd", "on" },
         { "scsi-cd", "quirk_mode_sense_rom_use_dbd", "on" },
+        { "scsi-cd", "quirk_mode_page_apple_vendor", "on" },
+        { "scsi-cd", "quirk_mode_page_vendor_specific_apple", "on" },
+        { "scsi-cd", "quirk_mode_page_truncated", "on" },
+        { "scsi-cd", "vendor", "MATSHITA" },
+        { "scsi-cd", "product", "CD-ROM CR-8005" },
+        { "scsi-cd", "ver", "1.0k" },
     };
 
     compat_props_add(mc->compat_props, compat, G_N_ELEMENTS(compat));
