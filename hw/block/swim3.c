@@ -261,6 +261,23 @@ static void drive_command(Swim3State *s, uint8_t addr, uint8_t value)
     }
 }
 
+/*
+ * The drive's RdData0/RdData1 addresses (SEL,CA2..0 = 4 / 0xC) also select
+ * the head whose data the chip decodes; the lines alone route it, without
+ * a sense read.
+ */
+static void swim3_route_head(Swim3State *s)
+{
+    uint8_t addr = ((s->mode_reg & SWIM3_HEAD_SELECT) >> 2) |
+                   (s->phase_lines & 7);
+
+    if (addr == STA_SELECT_HEAD_0) {
+        s->cur_head = 0;
+    } else if (addr == STA_SELECT_HEAD_1) {
+        s->cur_head = 1;
+    }
+}
+
 /* byte offset of a (track, head, 1-based sector) in a raw MFM image */
 static int64_t swim3_sector_offset(Swim3State *s, int sector_1based)
 {
@@ -591,6 +608,7 @@ static void swim3_write(void *opaque, hwaddr addr, uint64_t val64,
         break;
     case SWIM3_REG_PHASE:
         s->phase_lines = value & 0xF;
+        swim3_route_head(s);
         if (s->phase_lines & 8) {
             /* LSTRB high: command strobe to the selected drive */
             if (s->mode_reg & SWIM3_DRIVE_1) {
@@ -615,6 +633,7 @@ static void swim3_write(void *opaque, hwaddr addr, uint64_t val64,
             swim3_complete_pending_io(s);
         }
         s->mode_reg &= ~value;
+        swim3_route_head(s);
         swim3_update_irq(s);
         break;
     case SWIM3_REG_HANDSHAKE:
@@ -629,10 +648,12 @@ static void swim3_write(void *opaque, hwaddr addr, uint64_t val64,
             }
         } else if ((s->mode_reg ^ value) & value & SWIM3_GO) {
             s->mode_reg |= value;
+            swim3_route_head(s);
             swim3_access_start(s);
         } else {
             s->mode_reg |= value;
         }
+        swim3_route_head(s);
         swim3_update_irq(s);
         break;
     case SWIM3_REG_STEP:
