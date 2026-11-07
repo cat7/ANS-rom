@@ -35,6 +35,9 @@
 #include "hw/char/escc.h"
 #include "hw/misc/macio/macio.h"
 #include "hw/intc/heathrow_pic.h"
+#include "qemu/log.h"
+#include "qemu/main-loop.h"
+#include "system/dma.h"
 #include "trace.h"
 
 #define ESCC_CLOCK 3686400
@@ -539,6 +542,107 @@ static void macio_oldworld_class_init(ObjectClass *oc, const void *data)
  * address through the bridge's pass-through window, so the machine maps
  * the "bar" region itself.
  */
+/* 53C94 on DBDMA channel 0: the chip's DMA port is paced by the descriptor */
+static DBDMA_io *gc_esp_io(GrandCentralMacIOState *gs)
+{
+    DBDMA_io *io = gs->esp_io;
+
+    if (!io || !io->processing || gs->esp_io_done) {
+        return NULL;
+    }
+    return io;
+}
+
+static uint32_t gc_esp_dma_avail(void *opaque)
+{
+    DBDMA_io *io = gc_esp_io(opaque);
+
+    return io ? io->len : 0;
+}
+
+static void gc_esp_dma_advance(GrandCentralMacIOState *gs, DBDMA_io *io,
+                               int len)
+{
+    io->addr += len;
+    io->len -= len;
+    if (io->len == 0) {
+        gs->esp_io_done = true;
+        qemu_bh_schedule(gs->esp_dma_bh);
+    }
+}
+
+static void gc_esp_dma_read(void *opaque, uint8_t *buf, int len)
+{
+    GrandCentralMacIOState *gs = opaque;
+    DBDMA_io *io = gc_esp_io(gs);
+
+    if (!io || !io->is_dma_out || len > io->len) {
+        qemu_log_mask(LOG_GUEST_ERROR, "53c94: DMA read without an output "
+                      "descriptor\n");
+        memset(buf, 0, len);
+        return;
+    }
+    dma_memory_read(&address_space_memory, io->addr, buf, len,
+                    MEMTXATTRS_UNSPECIFIED);
+    gc_esp_dma_advance(gs, io, len);
+}
+
+static void gc_esp_dma_write(void *opaque, uint8_t *buf, int len)
+{
+    GrandCentralMacIOState *gs = opaque;
+    DBDMA_io *io = gc_esp_io(gs);
+
+    if (!io || io->is_dma_out || len > io->len) {
+        qemu_log_mask(LOG_GUEST_ERROR, "53c94: DMA write without an input "
+                      "descriptor\n");
+        return;
+    }
+    dma_memory_write(&address_space_memory, io->addr, buf, len,
+                     MEMTXATTRS_UNSPECIFIED);
+    gc_esp_dma_advance(gs, io, len);
+}
+
+/* Descriptor completion runs outside the chip's transfer loop */
+static void gc_esp_dma_end(GrandCentralMacIOState *gs)
+{
+    DBDMA_io *io = gs->esp_io;
+
+    if (!gs->esp_io_done) {
+        return;
+    }
+    gs->esp_io_done = false;
+    gs->esp_io = NULL;
+    if (io->processing) {
+        io->dma_end(io);
+    }
+}
+
+static void gc_esp_dma_bh(void *opaque)
+{
+    gc_esp_dma_end(opaque);
+}
+
+static void gc_esp_dma_rw(DBDMA_io *io)
+{
+    GrandCentralMacIOState *gs = io->opaque;
+
+    gs->esp_io = io;
+    gs->esp_io_done = false;
+    if (io->len == 0) {
+        gs->esp_io_done = true;
+        qemu_bh_schedule(gs->esp_dma_bh);
+        return;
+    }
+    esp_dma_ready(&gs->esp.esp);
+}
+
+static void gc_esp_dma_flush(DBDMA_io *io)
+{
+    GrandCentralMacIOState *gs = io->opaque;
+
+    gc_esp_dma_end(gs);
+}
+
 static void macio_grandcentral_realize(PCIDevice *d, Error **errp)
 {
     MacIOState *s = MACIO(d);
@@ -584,9 +688,10 @@ static void macio_grandcentral_realize(PCIDevice *d, Error **errp)
 
     /* 53C94, external SCSI bus */
     gs->esp.it_shift = 4;
-    gs->esp.esp.dma_memory_read = NULL;
-    gs->esp.esp.dma_memory_write = NULL;
-    gs->esp.esp.dma_opaque = NULL;
+    gs->esp.esp.dma_memory_read = gc_esp_dma_read;
+    gs->esp.esp.dma_memory_write = gc_esp_dma_write;
+    gs->esp.esp.dma_memory_avail = gc_esp_dma_avail;
+    gs->esp.esp.dma_opaque = gs;
     gs->esp.esp.dma_enabled = 1;
     if (!qdev_realize(DEVICE(&gs->esp), BUS(&s->macio_bus), errp)) {
         return;
@@ -595,6 +700,11 @@ static void macio_grandcentral_realize(PCIDevice *d, Error **errp)
     memory_region_add_subregion(&s->bar, 0x10000,
                                 sysbus_mmio_get_region(sbd, 0));
     sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(pic_dev, GC_SCSI_IRQ));
+    gs->esp_dma_bh = qemu_bh_new_guarded(gc_esp_dma_bh, gs,
+                                         &DEVICE(gs)->mem_reentrancy_guard);
+    DBDMA_register_channel(&s->dbdma, 0,
+                           qdev_get_gpio_in(pic_dev, GC_SCSI_DMA_IRQ),
+                           gc_esp_dma_rw, gc_esp_dma_flush, gs);
 
     if (!qdev_realize(DEVICE(&gs->mace), BUS(&s->macio_bus), errp)) {
         return;

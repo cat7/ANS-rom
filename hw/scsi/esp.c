@@ -481,17 +481,43 @@ static void esp_dma_ti_check(ESPState *s)
     }
 }
 
+/* Limit a DMA transfer to what the external DMA engine can take now */
+static uint32_t esp_dma_clamp(ESPState *s, uint32_t len)
+{
+    uint32_t avail;
+
+    if (!s->dma_memory_avail) {
+        return len;
+    }
+    avail = s->dma_memory_avail(s->dma_opaque);
+    if (len > avail) {
+        s->dma_starved = true;
+        return avail;
+    }
+    return len;
+}
+
+/* External DMA engine has a new buffer: resume a starved transfer */
+void esp_dma_ready(ESPState *s)
+{
+    if (s->dma_starved) {
+        esp_do_dma(s);
+    }
+}
+
 static void esp_do_dma(ESPState *s)
 {
     uint32_t len, cmdlen;
     uint8_t buf[ESP_CMDFIFO_SZ];
 
+    s->dma_starved = false;
     len = esp_get_tc(s);
 
     switch (esp_get_phase(s)) {
     case STAT_MO:
         if (s->dma_memory_read) {
             len = MIN(len, fifo8_num_free(&s->cmdfifo));
+            len = esp_dma_clamp(s, len);
             if (len) {
                 s->dma_memory_read(s->dma_opaque, buf, len);
                 esp_set_tc(s, esp_get_tc(s) - len);
@@ -548,6 +574,7 @@ static void esp_do_dma(ESPState *s)
         trace_esp_do_dma(cmdlen, len);
         if (s->dma_memory_read) {
             len = MIN(len, fifo8_num_free(&s->cmdfifo));
+            len = esp_dma_clamp(s, len);
             if (len) {
                 s->dma_memory_read(s->dma_opaque, buf, len);
                 fifo8_push_all(&s->cmdfifo, buf, len);
@@ -581,6 +608,7 @@ static void esp_do_dma(ESPState *s)
         switch (s->rregs[ESP_CMD]) {
         case CMD_TI | CMD_DMA:
             if (s->dma_memory_read) {
+                len = esp_dma_clamp(s, len);
                 if (len) {
                     s->dma_memory_read(s->dma_opaque, s->async_buf, len);
                     esp_set_tc(s, esp_get_tc(s) - len);
@@ -636,6 +664,7 @@ static void esp_do_dma(ESPState *s)
         switch (s->rregs[ESP_CMD]) {
         case CMD_TI | CMD_DMA:
             if (s->dma_memory_write) {
+                len = esp_dma_clamp(s, len);
                 if (len) {
                     s->dma_memory_write(s->dma_opaque, s->async_buf, len);
                 }
@@ -683,6 +712,9 @@ static void esp_do_dma(ESPState *s)
         switch (s->rregs[ESP_CMD]) {
         case CMD_ICCS | CMD_DMA:
             len = MIN(len, 1);
+            if (s->dma_memory_write) {
+                len = esp_dma_clamp(s, len);
+            }
 
             if (len) {
                 buf[0] = s->status;
@@ -718,6 +750,9 @@ static void esp_do_dma(ESPState *s)
         switch (s->rregs[ESP_CMD]) {
         case CMD_ICCS | CMD_DMA:
             len = MIN(len, 1);
+            if (s->dma_memory_write) {
+                len = esp_dma_clamp(s, len);
+            }
 
             if (len) {
                 buf[0] = 0;
@@ -950,6 +985,7 @@ void esp_command_complete(SCSIRequest *req, size_t resid)
     int to_device = (esp_get_phase(s) == STAT_DO);
 
     trace_esp_command_complete();
+    s->dma_starved = false;
 
     /*
      * Non-DMA transfers from the target will leave the last byte in
@@ -1107,6 +1143,7 @@ void esp_hard_reset(ESPState *s)
     fifo8_reset(&s->cmdfifo);
     s->dma = 0;
     s->dma_cb = NULL;
+    s->dma_starved = false;
     s->asc_mode = ESP_ASC_MODE_DIS;
 
     s->rregs[ESP_CFG1] = 7;
@@ -1167,6 +1204,7 @@ static void esp_run_cmd(ESPState *s)
 {
     uint8_t cmd = s->rregs[ESP_CMD];
 
+    s->dma_starved = false;
     if (cmd & CMD_DMA) {
         s->dma = 1;
         /* Reload DMA counter.  */

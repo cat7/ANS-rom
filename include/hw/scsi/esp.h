@@ -9,6 +9,7 @@
 /* esp.c */
 #define ESP_MAX_DEVS 7
 typedef void (*ESPDMAMemoryReadWriteFunc)(void *opaque, uint8_t *buf, int len);
+typedef uint32_t (*ESPDMAMemoryAvailFunc)(void *opaque);
 
 #define ESP_REGS 16
 #define ESP_FIFO_SZ 16
@@ -54,6 +55,9 @@ struct ESPState {
 
     ESPDMAMemoryReadWriteFunc dma_memory_read;
     ESPDMAMemoryReadWriteFunc dma_memory_write;
+    /* Optional: bytes the DMA engine can move now; 0 stalls the transfer */
+    ESPDMAMemoryAvailFunc dma_memory_avail;
+    bool dma_starved;
     void *dma_opaque;
     void (*dma_cb)(ESPState *s);
 
@@ -165,6 +169,7 @@ struct SysBusESPState {
 #define TCHI_AM53C974 0x12
 
 void esp_dma_enable(ESPState *s, int irq, int level);
+void esp_dma_ready(ESPState *s);
 void esp_request_cancelled(SCSIRequest *req);
 void esp_command_complete(SCSIRequest *req, size_t resid);
 void esp_transfer_data(SCSIRequest *req, uint32_t len);

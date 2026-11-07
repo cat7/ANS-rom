@@ -200,6 +200,9 @@ struct GrandCentralMacIOState {
 
     GrandCentralPICState pic;
     SysBusESPState esp;
+    DBDMA_io *esp_io;
+    bool esp_io_done;
+    QEMUBH *esp_dma_bh;
     MACEState mace;
     AWACSState awacs;
     Swim3State swim;
