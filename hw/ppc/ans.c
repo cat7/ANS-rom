@@ -392,10 +392,13 @@ static void ans_machine_class_init(ObjectClass *oc, const void *data)
     /*
      * AIX sizes and configures its disks from IBM's SCSD inquiry page and
      * reads a CD-ROM's block length from the MODE SENSE block descriptor.
-     * Mac OS's CD driver accepts only an Apple CD-ROM drive.
+     * Mac OS's CD driver accepts only an Apple CD-ROM drive, and Drive
+     * Setup initializes only a disk it knows.
      */
     static GlobalProperty compat[] = {
         { "scsi-hd", "ibm-scsd", "on" },
+        { "scsi-hd", "vendor", "SEAGATE" },
+        { "scsi-hd", "product", "ST225N" },
         { "scsi-cd", "quirk_mode_sense_rom_use_dbd", "on" },
         { "scsi-cd", "quirk_mode_page_apple_vendor", "on" },
         { "scsi-cd", "quirk_mode_page_vendor_specific_apple", "on" },
