@@ -225,6 +225,15 @@ void ppc_cpu_do_unaligned_access(CPUState *cs, vaddr vaddr,
     /* Restore state and reload the insn we executed, for filling in DSISR.  */
     cpu_restore_state(cs, retaddr);
     insn = ppc_ldl_code(env, env->nip);
+    if (ppc_le_munge_ea(env, 0, 4)) {
+        /* report the unmunged EA: XOR 6 for halfwords, 4 for the rest */
+        unsigned op = insn >> 26, xo = (insn >> 1) & 0x3ff;
+        bool half = (op >= 40 && op <= 45) ||
+                    (op == 31 && ((xo >= 279 && xo <= 439 && (xo & 31) == 23)
+                                  || xo == 790 || xo == 918));
+
+        vaddr ^= half ? 6 : 4;
+    }
 
     switch (env->mmu_model) {
     case POWERPC_MMU_SOFT_4xx:
@@ -435,7 +444,7 @@ uint32_t ppc_ldl_code(CPUArchState *env, target_ulong addr)
     MemOp op_end = ppc_data_endian_env(env);
     MemOpIdx oi = make_memop_idx(MO_UL | op_end, cpu_mmu_index(cs, true));
 
-    return cpu_ldl_code_mmu(env, addr, oi, 0);
+    return cpu_ldl_code_mmu(env, ppc_le_munge_ea(env, addr, 4), oi, 0);
 }
 
 #if defined(TARGET_PPC64)
@@ -498,6 +507,11 @@ static void do_rfi(CPUPPCState *env, target_ulong nip, target_ulong msr)
 {
     /* MSR:POW cannot be set by any form of rfi */
     msr &= ~(1ULL << MSR_POW);
+
+    if (env->le_munge) {
+        /* 604: rfi leaves ILE alone */
+        msr = (msr & ~(1ULL << MSR_ILE)) | (env->msr & (1ULL << MSR_ILE));
+    }
 
     /* MSR:TGPR cannot be set by any form of rfi */
     if (env->flags & POWERPC_FLAG_TGPR) {

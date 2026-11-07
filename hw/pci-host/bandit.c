@@ -23,6 +23,7 @@
 #include "hw/core/qdev-properties.h"
 #include "hw/pci/pci_device.h"
 #include "hw/pci-host/bandit.h"
+#include "system/address-spaces.h"
 #include "trace.h"
 
 #define BANDIT_ADDR_SELECT  0x48
@@ -87,6 +88,42 @@ static void bandit_data_write(void *opaque, hwaddr addr, uint64_t val,
     }
 }
 
+/* the address latch decodes its four bytes on (offset & 3) */
+static uint64_t bandit_conf_read(void *opaque, hwaddr addr, unsigned len)
+{
+    PCIHostState *h = opaque;
+    uint64_t val = 0;
+
+    for (unsigned i = 0; i < len; i++) {
+        val |= (uint64_t)((h->config_reg >> (8 * ((addr + i) & 3))) & 0xff)
+               << (8 * i);
+    }
+    return val;
+}
+
+static void bandit_conf_write(void *opaque, hwaddr addr, uint64_t val,
+                              unsigned len)
+{
+    PCIHostState *h = opaque;
+
+    for (unsigned i = 0; i < len; i++) {
+        unsigned sh = 8 * ((addr + i) & 3);
+
+        h->config_reg = (h->config_reg & ~(0xffu << sh)) |
+                        (((val >> (8 * i)) & 0xff) << sh);
+    }
+}
+
+static const MemoryRegionOps bandit_conf_ops = {
+    .read = bandit_conf_read,
+    .write = bandit_conf_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 4,
+    },
+};
+
 static const MemoryRegionOps bandit_data_ops = {
     .read = bandit_data_read,
     .write = bandit_data_write,
@@ -96,6 +133,163 @@ static const MemoryRegionOps bandit_data_ops = {
         .max_access_size = 4,
     },
 };
+
+/*
+ * Byte-lane reversal (mode-select ENDIAN bit clear): processor-bus byte n
+ * is PCI byte n ^ 7.  With the 604's little-endian address munge the two
+ * cancel, so a little-endian CPU sees PCI and DMA see memory as on an
+ * address-invariant little-endian bus.
+ */
+static uint64_t bandit_lane_read(void *opaque, hwaddr addr, unsigned size)
+{
+    BanditLane *l = opaque;
+    MemTxAttrs attrs = MEMTXATTRS_UNSPECIFIED;
+
+    addr ^= 8 - size;
+    switch (size) {
+    case 1:
+        return address_space_ldub(&l->as, addr, attrs, NULL);
+    case 2:
+        return address_space_lduw_le(&l->as, addr, attrs, NULL);
+    case 4:
+        return address_space_ldl_le(&l->as, addr, attrs, NULL);
+    default:
+        return address_space_ldq_le(&l->as, addr, attrs, NULL);
+    }
+}
+
+static void bandit_lane_write(void *opaque, hwaddr addr, uint64_t val,
+                              unsigned size)
+{
+    BanditLane *l = opaque;
+    MemTxAttrs attrs = MEMTXATTRS_UNSPECIFIED;
+
+    addr ^= 8 - size;
+    switch (size) {
+    case 1:
+        address_space_stb(&l->as, addr, val, attrs, NULL);
+        break;
+    case 2:
+        address_space_stw_le(&l->as, addr, val, attrs, NULL);
+        break;
+    case 4:
+        address_space_stl_le(&l->as, addr, val, attrs, NULL);
+        break;
+    default:
+        address_space_stq_le(&l->as, addr, val, attrs, NULL);
+        break;
+    }
+}
+
+static const MemoryRegionOps bandit_lane_ops = {
+    .read = bandit_lane_read,
+    .write = bandit_lane_write,
+    .endianness = DEVICE_BIG_ENDIAN,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+};
+
+/* bus-master accesses to host memory while the lanes are reversed */
+static uint64_t bandit_dma_read(void *opaque, hwaddr addr, unsigned size)
+{
+    MemTxAttrs attrs = MEMTXATTRS_UNSPECIFIED;
+
+    addr ^= 8 - size;
+    switch (size) {
+    case 1:
+        return address_space_ldub(&address_space_memory, addr, attrs, NULL);
+    case 2:
+        return address_space_lduw_be(&address_space_memory, addr, attrs, NULL);
+    case 4:
+        return address_space_ldl_be(&address_space_memory, addr, attrs, NULL);
+    default:
+        return address_space_ldq_be(&address_space_memory, addr, attrs, NULL);
+    }
+}
+
+static void bandit_dma_write(void *opaque, hwaddr addr, uint64_t val,
+                             unsigned size)
+{
+    MemTxAttrs attrs = MEMTXATTRS_UNSPECIFIED;
+
+    addr ^= 8 - size;
+    switch (size) {
+    case 1:
+        address_space_stb(&address_space_memory, addr, val, attrs, NULL);
+        break;
+    case 2:
+        address_space_stw_be(&address_space_memory, addr, val, attrs, NULL);
+        break;
+    case 4:
+        address_space_stl_be(&address_space_memory, addr, val, attrs, NULL);
+        break;
+    default:
+        address_space_stq_be(&address_space_memory, addr, val, attrs, NULL);
+        break;
+    }
+}
+
+static const MemoryRegionOps bandit_dma_ops = {
+    .read = bandit_dma_read,
+    .write = bandit_dma_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+    },
+};
+
+static AddressSpace *bandit_dma_as(PCIBus *bus, void *opaque, int devfn)
+{
+    BanditHostState *s = opaque;
+
+    return &s->dma_as;
+}
+
+static const PCIIOMMUOps bandit_iommu_ops = {
+    .get_address_space = bandit_dma_as,
+};
+
+/* the window the sysbus maps: mr[off, off + size), straight or reversed */
+static MemoryRegion *bandit_lane_init(BanditHostState *s, int n,
+                                      const char *name, MemoryRegion *mr,
+                                      hwaddr off, uint64_t size)
+{
+    BanditLane *l = &s->lanes[n];
+    Object *o = OBJECT(s);
+
+    memory_region_init(&l->outer, o, name, size);
+    memory_region_init_alias(&l->straight, o, name, mr, off, size);
+    memory_region_add_subregion(&l->outer, 0, &l->straight);
+    memory_region_init_io(&l->reversed, o, &bandit_lane_ops, l, name, size);
+    /* a forwarder: the access it makes may land on this device again */
+    l->reversed.disable_reentrancy_guard = true;
+    memory_region_set_enabled(&l->reversed, false);
+    memory_region_add_subregion_overlap(&l->outer, 0, &l->reversed, 1);
+
+    memory_region_init(&l->root, o, name, size);
+    memory_region_init_alias(&l->target, o, name, mr, off, size);
+    memory_region_add_subregion(&l->root, 0, &l->target);
+    address_space_init(&l->as, &l->root, name);
+    return &l->outer;
+}
+
+void bandit_set_lanes_reversed(BanditHostState *s, bool on)
+{
+    if (s->lanes_reversed == on) {
+        return;
+    }
+    trace_bandit_lanes(s->base, on);
+    s->lanes_reversed = on;
+    memory_region_transaction_begin();
+    for (int i = 0; i < BANDIT_NUM_LANES; i++) {
+        memory_region_set_enabled(&s->lanes[i].reversed, on);
+    }
+    memory_region_set_enabled(&s->dma_reversed, on);
+    memory_region_transaction_commit();
+}
 
 static void bandit_host_realize(DeviceState *dev, Error **errp)
 {
@@ -125,11 +319,29 @@ static void bandit_host_realize(DeviceState *dev, Error **errp)
     memory_region_init_alias(&s->mem_window, OBJECT(s), "bandit-pci-mem",
                              &s->pci_mmio, s->mem_base, 256 * MiB);
 
-    sysbus_init_mmio(sbd, &h->conf_mem);
-    sysbus_init_mmio(sbd, &h->data_mem);
-    sysbus_init_mmio(sbd, &s->io_window);
-    sysbus_init_mmio(sbd, &s->pass_through);
-    sysbus_init_mmio(sbd, &s->mem_window);
+    sysbus_init_mmio(sbd, bandit_lane_init(s, 0, "bandit-pci-conf-idx",
+                                           &h->conf_mem, 0, 0x1000));
+    sysbus_init_mmio(sbd, bandit_lane_init(s, 1, "bandit-pci-conf-data",
+                                           &h->data_mem, 0, 0x1000));
+    sysbus_init_mmio(sbd, bandit_lane_init(s, 2, "bandit-io-window",
+                                           &s->io_window, 0, BANDIT_IO_SIZE));
+    sysbus_init_mmio(sbd, bandit_lane_init(s, 3, "bandit-pass-through",
+                                           &s->pci_mmio, s->base + 16 * MiB,
+                                           16 * MiB));
+    sysbus_init_mmio(sbd, bandit_lane_init(s, 4, "bandit-pci-mem",
+                                           &s->pci_mmio, s->mem_base,
+                                           256 * MiB));
+
+    memory_region_init(&s->dma_root, OBJECT(s), "bandit-dma", UINT64_MAX);
+    memory_region_init_alias(&s->dma_straight, OBJECT(s), "bandit-dma",
+                             get_system_memory(), 0, UINT64_MAX);
+    memory_region_add_subregion(&s->dma_root, 0, &s->dma_straight);
+    memory_region_init_io(&s->dma_reversed, OBJECT(s), &bandit_dma_ops, s,
+                          "bandit-dma-reversed", 0x100000000ULL);
+    s->dma_reversed.disable_reentrancy_guard = true;
+    memory_region_set_enabled(&s->dma_reversed, false);
+    memory_region_add_subregion_overlap(&s->dma_root, 0, &s->dma_reversed, 1);
+    address_space_init(&s->dma_as, &s->dma_root, "bandit-dma");
 
     name = g_strdup_printf("bandit@%x", s->base);
     h->bus = pci_register_root_bus(dev, name, bandit_set_irq, bandit_map_irq,
@@ -137,6 +349,7 @@ static void bandit_host_realize(DeviceState *dev, Error **errp)
                                    PCI_DEVFN(13, 0), BANDIT_NUM_IRQS,
                                    TYPE_PCI_BUS);
     g_free(name);
+    pci_setup_iommu(h->bus, &bandit_iommu_ops, s);
 
     self = pci_new(PCI_DEVFN(11, 0), TYPE_BANDIT_PCI_DEVICE);
     qdev_prop_set_uint32(DEVICE(self), "addr-select", s->addr_select);
@@ -148,7 +361,7 @@ static void bandit_host_init(Object *obj)
     BanditHostState *s = BANDIT_PCI_HOST_BRIDGE(obj);
     PCIHostState *h = PCI_HOST_BRIDGE(obj);
 
-    memory_region_init_io(&h->conf_mem, obj, &pci_host_conf_le_ops, obj,
+    memory_region_init_io(&h->conf_mem, obj, &bandit_conf_ops, obj,
                           "bandit-pci-conf-idx", 0x1000);
     memory_region_init_io(&h->data_mem, obj, &bandit_data_ops, obj,
                           "bandit-pci-conf-data", 0x1000);
@@ -190,15 +403,19 @@ typedef struct BanditPCIState {
 
 OBJECT_DECLARE_SIMPLE_TYPE(BanditPCIState, BANDIT_PCI_DEVICE)
 
+static BanditHostState *bandit_host_of(PCIDevice *d)
+{
+    return BANDIT_PCI_HOST_BRIDGE(BUS(pci_get_bus(d))->parent);
+}
+
 static void bandit_pci_write_config(PCIDevice *d, uint32_t addr,
                                     uint32_t val, int len)
 {
     pci_default_write_config(d, addr, val, len);
-    if (ranges_overlap(addr, len, BANDIT_MODE_SELECT, 4) &&
-        !(pci_get_long(d->config + BANDIT_MODE_SELECT) & BANDIT_BIG_ENDIAN)) {
-        qemu_log_mask(LOG_UNIMP, "bandit: byte-lane reversal selected "
-                      "(mode-select 0x%08x)\n",
-                      pci_get_long(d->config + BANDIT_MODE_SELECT));
+    if (ranges_overlap(addr, len, BANDIT_MODE_SELECT, 4)) {
+        bandit_set_lanes_reversed(bandit_host_of(d),
+            !(pci_get_long(d->config + BANDIT_MODE_SELECT) &
+              BANDIT_BIG_ENDIAN));
     }
 }
 
@@ -209,6 +426,7 @@ static void bandit_pci_reset(DeviceState *dev)
 
     pci_set_long(d->config + BANDIT_ADDR_SELECT, s->addr_select);
     pci_set_long(d->config + BANDIT_MODE_SELECT, BANDIT_BIG_ENDIAN);
+    bandit_set_lanes_reversed(bandit_host_of(d), false);
 }
 
 static void bandit_pci_realize(PCIDevice *d, Error **errp)

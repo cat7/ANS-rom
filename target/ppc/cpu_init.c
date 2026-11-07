@@ -57,6 +57,7 @@
 static const Property powerpc_cpu_properties[] = {
     DEFINE_PROP_BOOL("rtas-stopped-state", PowerPCCPU,
                       rtas_stopped_state, true),
+    DEFINE_PROP_BOOL("le-munge", PowerPCCPU, env.le_munge, false),
 };
 
 static inline void vscr_init(CPUPPCState *env, uint32_t val)

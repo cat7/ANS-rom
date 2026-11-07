@@ -167,6 +167,9 @@ static uint32_t hreg_compute_hflags_value(CPUPPCState *env)
     if (msr_is_64bit(env, msr)) {
         hflags |= 1 << HFLAGS_64;
     }
+    if (env->le_munge) {
+        hflags |= 1 << HFLAGS_LE_MUNGE;
+    }
     if ((ppc_flags & POWERPC_FLAG_SPE) && (msr & (1 << MSR_SPE))) {
         hflags |= 1 << HFLAGS_SPE;
     }

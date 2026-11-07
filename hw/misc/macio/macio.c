@@ -582,7 +582,7 @@ static void gc_esp_dma_read(void *opaque, uint8_t *buf, int len)
         memset(buf, 0, len);
         return;
     }
-    dma_memory_read(&address_space_memory, io->addr, buf, len,
+    dma_memory_read(io->as, io->addr, buf, len,
                     MEMTXATTRS_UNSPECIFIED);
     gc_esp_dma_advance(gs, io, len);
 }
@@ -597,7 +597,7 @@ static void gc_esp_dma_write(void *opaque, uint8_t *buf, int len)
                       "descriptor\n");
         return;
     }
-    dma_memory_write(&address_space_memory, io->addr, buf, len,
+    dma_memory_write(io->as, io->addr, buf, len,
                      MEMTXATTRS_UNSPECIFIED);
     gc_esp_dma_advance(gs, io, len);
 }

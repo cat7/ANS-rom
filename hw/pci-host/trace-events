@@ -85,3 +85,4 @@ iosapic_reg_read(uint64_t reg_select, int size, uint64_t val) "reg_select 0x%"PR
 # bandit.c
 bandit_cfg_read(uint32_t base, uint32_t cfg, uint64_t port, unsigned len, uint64_t val) "0x%08x cfg 0x%08x +%"PRIu64" len %u -> 0x%"PRIx64
 bandit_cfg_write(uint32_t base, uint32_t cfg, uint64_t port, unsigned len, uint64_t val) "0x%08x cfg 0x%08x +%"PRIu64" len %u = 0x%"PRIx64
+bandit_lanes(uint32_t base, int reversed) "0x%08x byte lanes reversed %d"

@@ -28,6 +28,10 @@
 #include "accel/tcg/probe.h"
 #include "internal.h"
 #include "qemu/atomic128.h"
+#ifndef CONFIG_USER_ONLY
+#include "exec/translation-block.h"
+#include "system/ramblock.h"
+#endif
 
 /* #define DEBUG_OP */
 
@@ -330,6 +334,22 @@ void helper_icbi(CPUPPCState *env, target_ulong addr)
      * endianness is irrelevant.
      */
     cpu_ldl_mmu(env, addr, oi, GETPC());
+#if !defined(CONFIG_USER_ONLY)
+    if (env->le_munge) {
+        /*
+         * A munged fetch reads the other word of its doubleword, which
+         * may lie outside the range the TB is tracked by: drop the line.
+         */
+        void *host = probe_access(env, addr, 1, MMU_DATA_LOAD, mmu_idx,
+                                  GETPC());
+        ram_addr_t ra = host ? qemu_ram_addr_from_host(host) : RAM_ADDR_INVALID;
+
+        if (ra != RAM_ADDR_INVALID) {
+            tb_invalidate_phys_range(env_cpu(env), ra,
+                                     ra + env->dcache_line_size - 1);
+        }
+    }
+#endif
 }
 
 void helper_icbiep(CPUPPCState *env, target_ulong addr)

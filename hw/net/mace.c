@@ -105,7 +105,7 @@ static void mace_rx_dma(MACEState *s)
     }
     n = MIN(s->rx_len - s->rx_pos, io->len);
     trace_mace_rx_dma(io->addr, io->len, io->is_last, n);
-    dma_memory_write(&address_space_memory, io->addr, s->rx_frame + s->rx_pos,
+    dma_memory_write(io->as, io->addr, s->rx_frame + s->rx_pos,
                      n, MEMTXATTRS_UNSPECIFIED);
     s->rx_pos += n;
     io->len -= n;
@@ -224,7 +224,7 @@ static void mace_tx_dma_rw(DBDMA_io *io)
     trace_mace_tx_dma(io->addr, io->len, io->is_last);
     if (io->is_dma_out) {
         n = MIN(io->len, MACE_FRAME_MAX - s->tx_len);
-        dma_memory_read(&address_space_memory, io->addr,
+        dma_memory_read(io->as, io->addr,
                         s->tx_frame + s->tx_len, n, MEMTXATTRS_UNSPECIFIED);
         s->tx_len += n;
         if (io->is_last) {

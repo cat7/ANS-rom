@@ -157,7 +157,11 @@ static void ans_init(MachineState *machine)
         exit(1);
     }
 
-    ams->cpu = POWERPC_CPU(cpu_create(machine->cpu_type));
+    ams->cpu = POWERPC_CPU(object_new(machine->cpu_type));
+    /* the NT firmware runs the 604 in its munged little-endian mode */
+    object_property_set_bool(OBJECT(ams->cpu), "le-munge", true,
+                             &error_abort);
+    qdev_realize_and_unref(DEVICE(ams->cpu), NULL, &error_fatal);
     cpu_ppc_tb_init(&ams->cpu->env, ANS_TBFREQ);
     qemu_register_reset(ans_cpu_reset, ams);
 
@@ -228,6 +232,8 @@ static void ans_init(MachineState *machine)
     pci_realize_and_unref(PCI_DEVICE(gc), bus1, &error_fatal);
     memory_region_add_subregion_overlap(&bandit1->pci_mmio, ANS_GC_BASE,
                                         &macio->bar, 1);
+    /* Grand Central's DBDMA masters the bus through Bandit 1 */
+    DBDMA_set_address_space(&macio->dbdma, &bandit1->dma_as);
 
     pic_dev = DEVICE(object_resolve_path_component(gc, "pic"));
     sysbus_connect_irq(SYS_BUS_DEVICE(pic_dev), 0,

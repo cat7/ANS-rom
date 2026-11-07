@@ -886,7 +886,7 @@ static void escc_dma_tx_rw(DBDMA_io *io)
     uint8_t byte;
 
     for (i = 0; i < io->len; i++) {
-        dma_memory_read(&address_space_memory, io->addr + i, &byte, 1,
+        dma_memory_read(io->as, io->addr + i, &byte, 1,
                         MEMTXATTRS_UNSPECIFIED);
         if (qemu_chr_fe_backend_connected(&s->chr)) {
             /* Matches the existing blocking PIO write path's style. */

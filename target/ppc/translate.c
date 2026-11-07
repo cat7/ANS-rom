@@ -193,6 +193,8 @@ struct DisasContext {
     uint32_t opcode;
     /* Routine used to access memory */
     bool pr, hv, dr, le_mode;
+    bool le_munge_cpu;  /* env->le_munge */
+    bool le_munge;      /* MSR[LE] set on a le_munge CPU */
     bool lazy_tlb_flush;
     bool need_access_type;
     int mem_idx;
@@ -251,6 +253,121 @@ static inline MemOp ppc_code_endian_dc(const DisasContext *ctx)
 {
     return MO_BE ^ (ctx->le_mode * MO_BSWAP);
 }
+
+/*
+ * 60x little-endian mode: bytes stay in big-endian order, a 1/2/4-byte
+ * access goes to EA ^ 7/6/4, an 8-byte one is two word accesses with the
+ * high word at EA + 4, and a misaligned access takes the alignment
+ * interrupt.  Every guest access in this file goes through these.
+ */
+static TCGv ppc_munge_ea(TCGv ea, MemOp *mop)
+{
+    TCGv t = tcg_temp_new();
+
+    *mop = (*mop & ~MO_AMASK) | MO_ALIGN;
+    tcg_gen_xori_tl(t, ea, 8 - memop_size(*mop));
+    return t;
+}
+
+static MemOp ppc_munge_word(MemOp mop)
+{
+    return (mop & ~(MO_SIZE | MO_SIGN | MO_AMASK)) | MO_32 | MO_ALIGN;
+}
+
+static void ppc_gen_ld_i32(DisasContext *ctx, TCGv_i32 v, TCGv ea,
+                           TCGArg idx, MemOp mop)
+{
+    if (ctx->le_munge) {
+        ea = ppc_munge_ea(ea, &mop);
+    }
+    tcg_gen_qemu_ld_i32(v, ea, idx, mop);
+}
+
+static void ppc_gen_st_i32(DisasContext *ctx, TCGv_i32 v, TCGv ea,
+                           TCGArg idx, MemOp mop)
+{
+    if (ctx->le_munge) {
+        ea = ppc_munge_ea(ea, &mop);
+    }
+    tcg_gen_qemu_st_i32(v, ea, idx, mop);
+}
+
+static void ppc_gen_ld_i64(DisasContext *ctx, TCGv_i64 v, TCGv ea,
+                           TCGArg idx, MemOp mop)
+{
+    if (ctx->le_munge && memop_size(mop) == 8) {
+        TCGv_i32 lo = tcg_temp_new_i32(), hi = tcg_temp_new_i32();
+        TCGv t = tcg_temp_new();
+
+        /* low word first, so a misaligned EA reports EA ^ 4 */
+        tcg_gen_xori_tl(t, ea, 4);
+        tcg_gen_qemu_ld_i32(lo, t, idx, ppc_munge_word(mop));
+        tcg_gen_addi_tl(t, ea, 4);
+        tcg_gen_xori_tl(t, t, 4);
+        tcg_gen_qemu_ld_i32(hi, t, idx, ppc_munge_word(mop));
+        tcg_gen_concat_i32_i64(v, lo, hi);
+        return;
+    }
+    if (ctx->le_munge) {
+        ea = ppc_munge_ea(ea, &mop);
+    }
+    tcg_gen_qemu_ld_i64(v, ea, idx, mop);
+}
+
+static void ppc_gen_st_i64(DisasContext *ctx, TCGv_i64 v, TCGv ea,
+                           TCGArg idx, MemOp mop)
+{
+    if (ctx->le_munge && memop_size(mop) == 8) {
+        TCGv_i32 w = tcg_temp_new_i32();
+        TCGv t = tcg_temp_new();
+
+        tcg_gen_extrl_i64_i32(w, v);
+        tcg_gen_xori_tl(t, ea, 4);
+        tcg_gen_qemu_st_i32(w, t, idx, ppc_munge_word(mop));
+        tcg_gen_extrh_i64_i32(w, v);
+        tcg_gen_addi_tl(t, ea, 4);
+        tcg_gen_xori_tl(t, t, 4);
+        tcg_gen_qemu_st_i32(w, t, idx, ppc_munge_word(mop));
+        return;
+    }
+    if (ctx->le_munge) {
+        ea = ppc_munge_ea(ea, &mop);
+    }
+    tcg_gen_qemu_st_i64(v, ea, idx, mop);
+}
+
+static void ppc_gen_cmpxchg_i32(DisasContext *ctx, TCGv_i32 r, TCGv ea,
+                                TCGv_i32 o, TCGv_i32 n, TCGArg idx,
+                                MemOp mop)
+{
+    if (ctx->le_munge) {
+        ea = ppc_munge_ea(ea, &mop);
+    }
+    tcg_gen_atomic_cmpxchg_i32(r, ea, o, n, idx, mop);
+}
+
+#ifdef TARGET_PPC64
+static void ppc_gen_cmpxchg_i64(DisasContext *ctx, TCGv_i64 r, TCGv ea,
+                                TCGv_i64 o, TCGv_i64 n, TCGArg idx,
+                                MemOp mop)
+{
+    if (ctx->le_munge) {
+        ea = ppc_munge_ea(ea, &mop);
+    }
+    tcg_gen_atomic_cmpxchg_i64(r, ea, o, n, idx, mop);
+}
+#endif
+
+#define tcg_gen_qemu_ld_i32(v, a, i, m) ppc_gen_ld_i32(ctx, v, a, i, m)
+#define tcg_gen_qemu_st_i32(v, a, i, m) ppc_gen_st_i32(ctx, v, a, i, m)
+#define tcg_gen_qemu_ld_i64(v, a, i, m) ppc_gen_ld_i64(ctx, v, a, i, m)
+#define tcg_gen_qemu_st_i64(v, a, i, m) ppc_gen_st_i64(ctx, v, a, i, m)
+#define tcg_gen_atomic_cmpxchg_i32(r, a, o, n, i, m) \
+    ppc_gen_cmpxchg_i32(ctx, r, a, o, n, i, m)
+#ifdef TARGET_PPC64
+#define tcg_gen_atomic_cmpxchg_i64(r, a, o, n, i, m) \
+    ppc_gen_cmpxchg_i64(ctx, r, a, o, n, i, m)
+#endif
 
 /* True when active word size < size of target_long.  */
 #ifdef TARGET_PPC64
@@ -2826,7 +2943,7 @@ static void gen_ldst_multiple(DisasContext *ctx, bool store)
     TCGv t0;
     int rt = store ? rS(ctx->opcode) : rD(ctx->opcode);
 
-    if (ctx->le_mode) {
+    if (ctx->le_mode || ctx->le_munge) {
         gen_align_no_le(ctx);
         return;
     }
@@ -2891,7 +3008,7 @@ static void gen_lswi(DisasContext *ctx)
     int ra = rA(ctx->opcode);
     int nr;
 
-    if (ctx->le_mode) {
+    if (ctx->le_mode || ctx->le_munge) {
         gen_align_no_le(ctx);
         return;
     }
@@ -2917,7 +3034,7 @@ static void gen_lswx(DisasContext *ctx)
     TCGv t0;
     TCGv_i32 t1, t2, t3;
 
-    if (ctx->le_mode) {
+    if (ctx->le_mode || ctx->le_munge) {
         gen_align_no_le(ctx);
         return;
     }
@@ -2937,7 +3054,7 @@ static void gen_stswi(DisasContext *ctx)
     TCGv_i32 t1, t2;
     int nb = NB(ctx->opcode);
 
-    if (ctx->le_mode) {
+    if (ctx->le_mode || ctx->le_munge) {
         gen_align_no_le(ctx);
         return;
     }
@@ -2958,7 +3075,7 @@ static void gen_stswx(DisasContext *ctx)
     TCGv t0;
     TCGv_i32 t1, t2;
 
-    if (ctx->le_mode) {
+    if (ctx->le_mode || ctx->le_munge) {
         gen_align_no_le(ctx);
         return;
     }
@@ -4354,6 +4471,10 @@ static void gen_mtmsr(DisasContext *ctx)
         if (likely(!(ctx->insns_flags2 & PPC2_PPE42))) {
             /* mtmsr does not alter S, ME, or LE */
             mask &= ~((1ULL << MSR_LE) | (1ULL << MSR_ME) | (1ULL << MSR_S));
+            if (ctx->le_munge_cpu) {
+                /* 60x: mtmsr writes LE */
+                mask |= 1ULL << MSR_LE;
+            }
         }
 
         /*
@@ -6649,6 +6770,9 @@ static void ppc_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cs)
     ctx->access_type = -1;
     ctx->need_access_type = !mmu_is_64bit(env->mmu_model);
     ctx->le_mode = (hflags >> HFLAGS_LE) & 1;
+    ctx->le_munge_cpu = (hflags >> HFLAGS_LE_MUNGE) & 1;
+    ctx->le_munge = ctx->le_mode && ctx->le_munge_cpu;
+    ctx->le_mode &= !ctx->le_munge;
     ctx->default_tcg_memop_mask = ctx->le_mode ? MO_LE : MO_BE;
     ctx->flags = env->flags;
 #if defined(TARGET_PPC64)
@@ -6717,7 +6841,8 @@ static void ppc_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
               ctx->base.pc_next, ctx->mem_idx, (int)msr_ir);
 
     ctx->cia = pc = ctx->base.pc_next;
-    insn = translator_ldl_end(env, dcbase, pc, mo_endian);
+    insn = translator_ldl_end(env, dcbase, ctx->le_munge ? pc ^ 4 : pc,
+                              mo_endian);
     ctx->base.pc_next = pc += 4;
 
     if (!is_prefix_insn(ctx, insn)) {

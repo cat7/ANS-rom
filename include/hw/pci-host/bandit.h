@@ -28,6 +28,22 @@ OBJECT_DECLARE_SIMPLE_TYPE(BanditHostState, BANDIT_PCI_HOST_BRIDGE)
  *   3  PCI memory pass-through, 16 MB (map at base + 16 MB)
  *   4  PCI memory, 256 MB    (map at the "mem-base" property)
  */
+/*
+ * A CPU-side window with the bridge's little-endian byte-lane reversal:
+ * an N-byte access at offset o reaches PCI at o ^ (8 - N) with its
+ * value taken as little-endian.
+ */
+typedef struct BanditLane {
+    MemoryRegion outer;
+    MemoryRegion straight;
+    MemoryRegion reversed;
+    MemoryRegion root;
+    MemoryRegion target;
+    AddressSpace as;
+} BanditLane;
+
+#define BANDIT_NUM_LANES 5
+
 struct BanditHostState {
     PCIHostState parent_obj;
 
@@ -43,6 +59,16 @@ struct BanditHostState {
     MemoryRegion pass_through;
     MemoryRegion mem_window;
     qemu_irq irqs[BANDIT_NUM_IRQS];
+
+    bool lanes_reversed;
+    BanditLane lanes[BANDIT_NUM_LANES];
+    /* bus-master view of host memory */
+    MemoryRegion dma_root;
+    MemoryRegion dma_straight;
+    MemoryRegion dma_reversed;
+    AddressSpace dma_as;
 };
+
+void bandit_set_lanes_reversed(BanditHostState *s, bool on);
 
 #endif

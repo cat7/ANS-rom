@@ -25,7 +25,18 @@
 
 static inline bool ppc_env_is_little_endian(const CPUPPCState *env)
 {
-    return FIELD_EX64(env->msr, MSR, LE);
+    /* munged LE keeps big-endian byte order */
+    return FIELD_EX64(env->msr, MSR, LE) && !env->le_munge;
+}
+
+/* EA ^ 7/6/4/0 for a 1/2/4/8-byte access while munged LE is on */
+static inline target_ulong ppc_le_munge_ea(const CPUPPCState *env,
+                                           target_ulong ea, unsigned size)
+{
+    if (env->le_munge && FIELD_EX64(env->msr, MSR, LE)) {
+        ea ^= (8 - size) & 7;
+    }
+    return ea;
 }
 
 /**

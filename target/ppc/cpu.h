@@ -864,6 +864,7 @@ enum {
     HFLAGS_TM = 8,   /* computed from MSR_TM */
     HFLAGS_BE = 9,   /* MSR_BE -- from elsewhere on embedded ppc */
     HFLAGS_SE = 10,  /* MSR_SE -- from elsewhere on embedded ppc */
+    HFLAGS_LE_MUNGE = 11, /* env->le_munge */
     HFLAGS_FP = 13,  /* MSR_FP */
     HFLAGS_PR = 14,  /* MSR_PR */
     HFLAGS_PMCC0 = 15,  /* MMCR0 PMCC bit 0 */
@@ -1398,6 +1399,8 @@ struct CPUArchState {
     uint32_t flags;
     uint64_t insns_flags;
     uint64_t insns_flags2;
+    /* MSR[LE] is the 60x address munge, not a byte swap */
+    bool le_munge;
 
     int error_code;
     uint32_t pending_interrupts;

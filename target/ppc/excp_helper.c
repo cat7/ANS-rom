@@ -554,6 +554,10 @@ static void powerpc_excp_6xx(PowerPCCPU *cpu, int excp)
      */
     new_msr = env->msr & (((target_ulong)1 << MSR_ME) |
                            ((target_ulong)1 << MSR_EP));
+    if (env->le_munge) {
+        /* 604: ILE is unchanged by an interrupt */
+        new_msr |= env->msr & ((target_ulong)1 << MSR_ILE);
+    }
 
     /* HV emu assistance interrupt only exists on server arch 2.05 or later */
     if (excp == POWERPC_EXCP_HV_EMU) {

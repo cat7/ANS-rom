@@ -374,7 +374,7 @@ static void swim3_access_tick(void *opaque)
                 return;
             }
             if (io->len - (int)s->pending_off >= (int)sizeof(hdr)) {
-                dma_memory_read(&address_space_memory,
+                dma_memory_read(io->as,
                                 io->addr + s->pending_off, hdr, sizeof(hdr),
                                 MEMTXATTRS_UNSPECIFIED);
                 while (skip < (int)sizeof(hdr) &&
@@ -389,7 +389,7 @@ static void swim3_access_tick(void *opaque)
                     skip = 0;    /* unrecognized framing: take data raw */
                 }
             }
-            dma_memory_read(&address_space_memory,
+            dma_memory_read(io->as,
                             io->addr + s->pending_off + skip,
                             buf, SECTOR_SIZE, MEMTXATTRS_UNSPECIFIED);
             s->pending_off += skip;
@@ -415,7 +415,7 @@ static void swim3_access_tick(void *opaque)
                 memset(buf, 0, SECTOR_SIZE);
                 s->error |= 0x40;
             }
-            dma_memory_write(&address_space_memory, io->addr + s->pending_off,
+            dma_memory_write(io->as, io->addr + s->pending_off,
                              buf, SECTOR_SIZE, MEMTXATTRS_UNSPECIFIED);
             trace_swim3_sector_io(true, s->cur_track, s->cur_head, sect, true);
         }
