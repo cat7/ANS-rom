@@ -645,7 +645,13 @@ static void lsi_select_timeout(void *opaque)
         s->waiting = LSI_NOWAIT;
     }
     s->sstat0 &= ~LSI_SSTAT0_WOA;
-    lsi_script_scsi_interrupt(s, LSI_SIST0_UDC, LSI_SIST1_STO);
+    /*
+     * UDC comes with STO only while SDU is set; Mac OS's SIM resets the
+     * bus on any UDC after a selection time-out.
+     */
+    lsi_script_scsi_interrupt(s,
+                              (s->scntl2 & LSI_SCNTL2_SDU) ? LSI_SIST0_UDC : 0,
+                              LSI_SIST1_STO);
     lsi_stop_script(s);
 }
 
