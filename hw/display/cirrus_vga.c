@@ -204,7 +204,23 @@ static void cirrus_update_memory_access(CirrusVGAState *s);
 /* SR17[6:2]: BLT registers in the last 256 bytes of the linear space */
 static bool cirrus_linear_mmio(CirrusVGAState *s)
 {
+    if (s->is_54m30 && !(s->vga.sr[0x07] & 0xf0)) {
+        /* SR17[6] is ignored unless SR7[7:4] enables linear addressing */
+        return false;
+    }
     return (s->vga.sr[0x17] & 0x44) == 0x44;
+}
+
+/* SR17[2] without the linear placement: BLT registers at 0xb8000 */
+static bool cirrus_window_mmio(CirrusVGAState *s, hwaddr addr)
+{
+    if (s->is_54m30) {
+        /* address bits 14:8 are don't care */
+        return addr >= 0x18000 && (s->vga.sr[0x17] & 0x04) &&
+               !cirrus_linear_mmio(s);
+    }
+    return addr >= 0x18000 && addr < 0x18100 &&
+           (s->vga.sr[0x17] & 0x44) == 0x04;
 }
 
 /* ... and that space is the display memory window */
@@ -806,9 +822,23 @@ static int cirrus_do_copy(CirrusVGAState *s, int dst, int src, int w, int h)
     return 1;
 }
 
+/* BLACKNESS, WHITENESS, NOP and NOTDST never read the source */
+static bool cirrus_rop_reads_src(uint8_t rop)
+{
+    switch (rop) {
+    case CIRRUS_ROP_0:
+    case CIRRUS_ROP_1:
+    case CIRRUS_ROP_NOP:
+    case CIRRUS_ROP_NOTDST:
+        return false;
+    default:
+        return true;
+    }
+}
+
 static int cirrus_bitblt_videotovideo_copy(CirrusVGAState * s)
 {
-    if (blit_is_unsafe(s, false))
+    if (blit_is_unsafe(s, !cirrus_rop_reads_src(s->vga.gr[0x32])))
         return 0;
 
     return cirrus_do_copy(s, s->cirrus_blt_dstaddr - s->vga.params.start_addr,
@@ -1102,6 +1132,13 @@ static void cirrus_write_bitblt(CirrusVGAState * s, unsigned reg_value)
         /* reset abandons the BLT and holds the engine; no start */
         cirrus_bitblt_reset(s);
         s->vga.gr[0x31] = reg_value & ~(CIRRUS_BLT_START | CIRRUS_BLT_BUSY);
+        return;
+    }
+    if (s->is_54m30) {
+        /* the engine is idle after reset; releasing it may start a BLT */
+        if (reg_value & CIRRUS_BLT_START) {
+            cirrus_bitblt_start(s);
+        }
         return;
     }
     if (((old_value & CIRRUS_BLT_RESET) != 0) &&
@@ -2050,12 +2087,12 @@ static uint64_t cirrus_vga_mem_read(void *opaque,
             val = *(s->vga.vram_ptr + bank_offset);
         } else
             val = 0xff;
-    } else if (addr >= 0x18000 && addr < 0x18100) {
+    } else if (cirrus_window_mmio(s, addr)) {
         /* memory-mapped I/O */
+        val = cirrus_mmio_blt_read(s, addr & 0xff);
+    } else if (addr >= 0x18000 && addr < 0x18100) {
+        /* memory-mapped I/O disabled */
         val = 0xff;
-        if ((s->vga.sr[0x17] & 0x44) == 0x04) {
-            val = cirrus_mmio_blt_read(s, addr & 0xff);
-        }
     } else {
         val = 0xff;
         qemu_log_mask(LOG_GUEST_ERROR,
@@ -2116,11 +2153,11 @@ static void cirrus_vga_mem_write(void *opaque,
                 }
             }
         }
-    } else if (addr >= 0x18000 && addr < 0x18100) {
+    } else if (cirrus_window_mmio(s, addr)) {
         /* memory-mapped I/O */
-        if ((s->vga.sr[0x17] & 0x44) == 0x04) {
-            cirrus_mmio_blt_write(s, addr & 0xff, mem_value);
-        }
+        cirrus_mmio_blt_write(s, addr & 0xff, mem_value);
+    } else if (addr >= 0x18000 && addr < 0x18100) {
+        /* memory-mapped I/O disabled */
     } else {
         qemu_log_mask(LOG_GUEST_ERROR,
                       "cirrus: mem_writeb 0x" HWADDR_FMT_plx " "
@@ -3029,8 +3066,17 @@ static void pci_cirrus_vga_realize(PCIDevice *dev, Error **errp)
                               &cirrus_top_mmio_io_ops, s, "cirrus-top-mmio",
                               0x100);
         memory_region_set_enabled(&s->cirrus_top_mmio_io, false);
-        memory_region_add_subregion(&s->pci_bar, 0x1000000 - 0x100,
-                                    &s->cirrus_top_mmio_io);
+        memory_region_add_subregion_overlap(&s->pci_bar, 0x1000000 - 0x100,
+                                            &s->cirrus_top_mmio_io, 1);
+        /*
+         * The 0xa0000 window, unreachable behind Bandit, mirrored in the
+         * top 128 KB of the aperture where the NT HAL translates it.
+         */
+        memory_region_init_alias(&s->cirrus_window_mirror, OBJECT(dev),
+                                 "cirrus-window-mirror",
+                                 &s->low_mem_container, 0, 0x20000);
+        memory_region_add_subregion(&s->pci_bar, 0x1000000 - 0x20000,
+                                    &s->cirrus_window_mirror);
         s->is_54m30 = true;
     } else {
         memory_region_init(&s->pci_bar, OBJECT(dev), "cirrus-pci-bar0",

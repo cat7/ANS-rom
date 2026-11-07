@@ -86,7 +86,8 @@ glue(cirrus_bitblt_rop_fwd_, ROP_NAME)(CirrusVGAState *s,
     dstpitch -= bltwidth;
     srcpitch -= bltwidth;
 
-    if (bltheight > 1 && (dstpitch < 0 || srcpitch < 0)) {
+    /* the 54M30 draws overlapping lines; every access is masked */
+    if (bltheight > 1 && (dstpitch < 0 || srcpitch < 0) && !s->is_54m30) {
         return;
     }
 

@@ -54,6 +54,7 @@ typedef struct CirrusVGAState {
     MemoryRegion cirrus_linear_bitblt_io;
     MemoryRegion cirrus_mmio_io;
     MemoryRegion cirrus_top_mmio_io; /* BLT registers atop a 16 MB aperture */
+    MemoryRegion cirrus_window_mirror; /* 0xa0000 window atop the aperture */
     bool is_54m30;
     MemoryRegion pci_bar;
     bool linear_vram;  /* vga.vram mapped over cirrus_linear_io */
