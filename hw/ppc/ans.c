@@ -73,6 +73,7 @@ struct ANSMachineState {
     char *lcd;
     uint32_t power_supplies;
     uint32_t pll_cfg;
+    bool onboard_video;
 };
 
 /*
@@ -239,7 +240,9 @@ static void ans_init(MachineState *machine)
     }
 
     /* built-in PCI devices on Bandit 1 */
-    pci_create_simple(bus1, PCI_DEVFN(15, 0), "cirrus-54m30");
+    if (ams->onboard_video) {
+        pci_create_simple(bus1, PCI_DEVFN(15, 0), "cirrus-54m30");
+    }
     pci_create_simple(bus1, PCI_DEVFN(17, 0), "lsi53c825a");
     pci_create_simple(bus1, PCI_DEVFN(18, 0), "lsi53c825a");
 
@@ -336,6 +339,16 @@ static void ans_set_pll_cfg(Object *obj, Visitor *v, const char *name,
     *(uint32_t *)opaque = value;
 }
 
+static bool ans_get_onboard_video(Object *obj, Error **errp)
+{
+    return ANS700_MACHINE(obj)->onboard_video;
+}
+
+static void ans_set_onboard_video(Object *obj, bool value, Error **errp)
+{
+    ANS700_MACHINE(obj)->onboard_video = value;
+}
+
 static void ans_instance_init(Object *obj)
 {
     ANSMachineState *ams = ANS700_MACHINE(obj);
@@ -343,6 +356,7 @@ static void ans_instance_init(Object *obj)
     ams->keyswitch = g_strdup("normal");
     ams->power_supplies = 1;
     ams->pll_cfg = 0xa;
+    ams->onboard_video = true;
 
     object_property_add_str(obj, "keyswitch", ans_get_keyswitch,
                             ans_set_keyswitch);
@@ -365,6 +379,11 @@ static void ans_instance_init(Object *obj)
                         ans_set_pll_cfg, NULL, &ams->pll_cfg);
     object_property_set_description(obj, "pll-cfg",
                                     "604e PLL_CFG strap (HID1[0:3])");
+    object_property_add_bool(obj, "onboard-video", ans_get_onboard_video,
+                             ans_set_onboard_video);
+    object_property_set_description(obj, "onboard-video",
+                                    "Built-in Cirrus 54M30 display "
+                                    "(default on)");
 }
 
 static void ans_machine_class_init(ObjectClass *oc, const void *data)
