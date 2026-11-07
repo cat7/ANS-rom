@@ -92,6 +92,8 @@ Machine options
 - ``pll-cfg=N`` -- the 604e PLL strap (default $A).
 - ``onboard-video=on|off`` -- the built-in 54M30 (default on). Off leaves
   an added card as the only screen.
+- ``rtc-epoch=unix|mac`` -- the clock counts seconds from 1970 (``unix``,
+  default, for AIX) or from 1904 (``mac``, for Mac OS).
 
 Installing AIX
 ==============
@@ -169,7 +171,7 @@ id matches the id in its ROM, so give it the ROM's id: ``0x5046`` for
 .. code-block:: shell
 
   ./qemu-system-ppc \
-    -M ans700,onboard-video=off,nvram=nvram-macos.bin -m 512 \
+    -M ans700,onboard-video=off,rtc-epoch=mac,nvram=nvram-macos.bin -m 512 \
     -bios ans-rom-2.0.rom \
     -device ati-rage128-pro,bus=bandit@f4000000,addr=0xd,device-id=0x5046,romfile=ati_rage128pro_136_agp.rom \
     -drive if=none,id=cd,file=MacOS85.iso,format=raw,media=cdrom,readonly=on \

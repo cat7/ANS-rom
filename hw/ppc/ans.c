@@ -74,6 +74,7 @@ struct ANSMachineState {
     uint32_t power_supplies;
     uint32_t pll_cfg;
     bool onboard_video;
+    bool rtc_mac_epoch;
 };
 
 /*
@@ -206,8 +207,8 @@ static void ans_init(MachineState *machine)
     qdev_prop_set_bit(dev, "terminal-lines", true);
     dev = DEVICE(object_resolve_path_component(gc, "cuda"));
     qdev_prop_set_bit(dev, "default-pram", false);
-    /* AIX keeps the clock in seconds since 1970 */
-    qdev_prop_set_bit(dev, "rtc-unix-epoch", true);
+    /* AIX counts the clock from 1970, Mac OS and Windows NT from 1904 */
+    qdev_prop_set_bit(dev, "rtc-unix-epoch", !ams->rtc_mac_epoch);
     dev = DEVICE(object_resolve_path_component(gc, "mace"));
     qemu_configure_nic_device(dev, true, NULL);
     qemu_macaddr_default_if_unset(&MACE(dev)->conf.macaddr);
@@ -355,6 +356,22 @@ static void ans_set_onboard_video(Object *obj, bool value, Error **errp)
     ANS700_MACHINE(obj)->onboard_video = value;
 }
 
+static char *ans_get_rtc_epoch(Object *obj, Error **errp)
+{
+    return g_strdup(ANS700_MACHINE(obj)->rtc_mac_epoch ? "mac" : "unix");
+}
+
+static void ans_set_rtc_epoch(Object *obj, const char *value, Error **errp)
+{
+    if (!strcmp(value, "unix")) {
+        ANS700_MACHINE(obj)->rtc_mac_epoch = false;
+    } else if (!strcmp(value, "mac")) {
+        ANS700_MACHINE(obj)->rtc_mac_epoch = true;
+    } else {
+        error_setg(errp, "rtc-epoch must be unix or mac");
+    }
+}
+
 static void ans_instance_init(Object *obj)
 {
     ANSMachineState *ams = ANS700_MACHINE(obj);
@@ -390,6 +407,12 @@ static void ans_instance_init(Object *obj)
     object_property_set_description(obj, "onboard-video",
                                     "Built-in Cirrus 54M30 display "
                                     "(default on)");
+    object_property_add_str(obj, "rtc-epoch", ans_get_rtc_epoch,
+                            ans_set_rtc_epoch);
+    object_property_set_description(obj, "rtc-epoch",
+                                    "Clock counted from 1970 (unix, AIX; "
+                                    "default) or 1904 (mac, Mac OS and "
+                                    "Windows NT)");
 }
 
 static void ans_machine_class_init(ObjectClass *oc, const void *data)
