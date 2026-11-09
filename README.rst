@@ -7,7 +7,8 @@ Network Server 700/200 (``-M ans700``) to ``qemu-system-ppc``. The machine
 runs Apple's production ROM (Open Firmware 1.1.22) and AIX 4.1.5 for the
 Network Server: the install CD, the installed system, the graphics console
 and CDE. With the Network Server ROM 2.0 and an ATI Rage 128 Pro it also
-starts Mac OS 8.5 from CD. It is an experiment and is not meant for
+starts Mac OS 8.5 from CD, and with the ROM 2.26NT it installs and runs
+Windows NT 4.0 for PowerPC. It is an experiment and is not meant for
 upstream QEMU.
 
 QEMU as a whole is released under the GNU General Public License, version
@@ -93,7 +94,7 @@ Machine options
 - ``onboard-video=on|off`` -- the built-in 54M30 (default on). Off leaves
   an added card as the only screen.
 - ``rtc-epoch=unix|mac`` -- the clock counts seconds from 1970 (``unix``,
-  default, for AIX) or from 1904 (``mac``, for Mac OS).
+  default, for AIX) or from 1904 (``mac``, for Mac OS and Windows NT).
 
 Installing AIX
 ==============
@@ -211,6 +212,47 @@ Installing ``X11.Dt`` turns on the graphical login. The 54M30 starts at
 
 The keyboard and the mouse work on the desktop.
 
+Running Windows NT
+==================
+
+Windows NT 4.0 for PowerPC runs on the Network Server ROM 2.26NT, whose
+Open Firmware can run little-endian, with the hardware layer (HAL), ADB
+driver and ARC firmware of powermac-nt-hal on a boot floppy
+(github.com/cat7/nt-boot-floppy, from pappadf/powermac-nt-hal). The
+machine models the 604's little-endian mode and Bandit's byte-lane
+reversal for it, and the 54M30's BitBLT engine for NT's Cirrus driver.
+
+The disk needs a FAT system partition, which NT's Setup cannot make on this
+machine; the GUI makes such a disk ("For: Windows NT"). The CD goes on
+``scsi.1`` ID 0, the disk on ``scsi.2`` ID 0:
+
+.. code-block:: shell
+
+  ./qemu-system-ppc \
+    -M ans700,rtc-epoch=mac,nvram=nvram-nt.bin -m 64 \
+    -bios ans-rom-2.26NT.rom \
+    -drive if=none,id=cd,file=winnt40.iso,format=raw,media=cdrom,readonly=on \
+    -device scsi-cd,drive=cd,bus=scsi.1,scsi-id=0 \
+    -drive if=none,id=hd,file=nt-disk.img,format=raw \
+    -device scsi-hd,drive=hd,bus=scsi.2,scsi-id=0 \
+    -drive if=none,id=fd0,file=nt-boot-floppy.img,format=raw \
+    -global swim3.drive=fd0
+
+At the ``0 >`` prompt, once per NVRAM (Open Firmware turns little-endian
+and resets)::
+
+  load fd:,\setup.of
+  load-base loadsize eval
+
+Then ``\boot.of`` the same way to install from the CD, and
+``\bootdisk.of`` to start the installed system. At Setup's mass-storage
+screen add the floppy's ADB/OEM-disk driver (S, Other). An NVRAM set up
+for NT no longer starts AIX or Mac OS.
+
+- Tested: NT 4.0 Workstation (build 1381) installed from CD and started
+  to the desktop with the Open Firmware console on ttya; with the console
+  on the screen, Setup up to its licence screen.
+
 Known limits
 ============
 
@@ -221,5 +263,8 @@ Known limits
 - The 53C94 answers an empty SCSI id at once instead of after the
   selection time-out.
 - Mac OS: only 8.5 starting from CD is tested.
+- Windows NT: no network driver (MACE); the 54M30 only, no Rage 128.
+  About one start in four of the installed system hangs in Open Firmware
+  before NT; start it again.
 - Open Firmware network boot is untested.
 - The CDE and lft consoles were tested in English only.
