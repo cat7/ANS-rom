@@ -179,7 +179,8 @@ static void nvram_store(ANSGBusState *s, unsigned idx, uint8_t val)
 {
     s->nvram[idx] = val;
     if (s->nvram_fd >= 0 &&
-        pwrite(s->nvram_fd, &val, 1, idx) != 1) {
+        (lseek(s->nvram_fd, idx, SEEK_SET) != idx ||
+         write(s->nvram_fd, &val, 1) != 1)) {
         warn_report_once("ans-gbus: NVRAM file write failed");
     }
 }
@@ -366,7 +367,8 @@ static void gbus_realize(DeviceState *dev, Error **errp)
                              s->nvram_file);
             return;
         }
-        if (pread(s->nvram_fd, s->nvram, ANS_NVRAM_SIZE, 0) < 0) {
+        if (lseek(s->nvram_fd, 0, SEEK_SET) < 0 ||
+            read(s->nvram_fd, s->nvram, ANS_NVRAM_SIZE) < 0) {
             error_setg_errno(errp, errno, "cannot read NVRAM file '%s'",
                              s->nvram_file);
             return;
